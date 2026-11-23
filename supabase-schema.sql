@@ -38,6 +38,8 @@ create table if not exists public.wf_logs (
   hours numeric,
   hourly_rate integer,
   pay integer,
+  allowance integer default 0,
+  allowance_memo text,
   pay_manual boolean default false,
   client_id text,
   place text,
@@ -55,6 +57,10 @@ create table if not exists public.wf_logs (
 -- ON/OFF 를 누른 실제 시각 (이미 만든 표에도 칸을 더한다)
 alter table public.wf_logs add column if not exists on_at text;
 alter table public.wf_logs add column if not exists off_at text;
+
+-- 근무시간 외 추가 수당 (일당 = 근무시간 × 시급 + 수당)
+alter table public.wf_logs add column if not exists allowance integer default 0;
+alter table public.wf_logs add column if not exists allowance_memo text;
 
 create table if not exists public.wf_sms (
   id text primary key,
