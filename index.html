@@ -207,6 +207,9 @@
   .wcard-rows>div{font-size:12px;color:#4b5563;display:flex;gap:8px;font-weight:600}
   .wcard-rows>div>span{color:#98a1ad;flex:0 0 34px;font-weight:700}
   .wcard-foot{display:flex;gap:5px;margin-top:10px;padding-top:9px;border-top:1px dashed var(--line);justify-content:flex-end}
+  .wcard-freq{margin-top:8px;font-size:12px;font-weight:700;color:#4b5563;line-height:1.55}
+  .wcard-freq b{display:block;font-size:11px;color:#98a1ad;margin-bottom:2px;font-weight:800}
+  .wcard-freq i{font-style:normal;color:var(--brand-deep);font-weight:800}
 
   .wk-tags{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
   .wk-tag{font-size:11px;font-weight:700;background:#f4f6f9;border:1px solid #e9edf3;border-radius:999px;padding:3px 8px;color:#4b5563}
@@ -2415,10 +2418,13 @@ function workerListHTML(){
       '<div class="wcard-rows">' +
         '<div><span>계좌</span>' + esc(w.account || '-') + '</div>' +
         '<div><span>메모</span>' + esc(w.memo || '-') + '</div>' +
-        (freqTop.length
-          ? '<div><span>자주 가는 곳</span>' + freqTop.map(o => esc(o.name) + ' <b>' + o.count + '회</b>').join(' · ') + '</div>'
-          : '<div><span>자주 가는 곳</span><span class="muted">기록 없음</span></div>') +
         (unpaid > 0 ? '<div><span>지급 대기</span><b style="color:var(--red)">' + won(unpaid) + '</b></div>' : '') +
+      '</div>' +
+      '<div class="wcard-freq"><b>⭐ 자주 가는 곳</b>' +
+        (freqTop.length
+          ? freqTop.map(o => esc(o.name) + ' <i>' + o.count + '회</i>').join(' · ') +
+            (freq.length > freqTop.length ? ' <i>외 ' + (freq.length - freqTop.length) + '곳</i>' : '')
+          : '<span class="muted">기록 없음</span>') +
       '</div>' +
       '<div class="wcard-foot">' +
         '<a class="mini" href="tel:' + esc(unpad(w.phone)) + '">전화</a>' +
@@ -3314,10 +3320,11 @@ function openQuickShift(opts){
   const start0 = (existing && existing.start) || opts.start || '08:00';
   const isOpen = !!existing && isOpenShift(existing);
   const elapsed = isOpen ? Math.max(10, Math.round(openMinutes(existing) / 10) * 10) : 0;
+  const curMin = (existing && existing.end) ? Math.round(hoursOf(existing) * 60) : 0;
   const dur0 = existing
-    ? (existing.end ? Math.round(hoursOf(existing) * 60) : elapsed)
+    ? (curMin > 0 ? curMin : (elapsed > 0 ? elapsed : 480))
     : (num(opts.durMin) > 0 ? num(opts.durMin) : 480);
-  const end0 = (existing && existing.end) || minToTime(timeMin(start0) + dur0);
+  const end0 = (curMin > 0 && existing.end) ? existing.end : minToTime(timeMin(start0) + dur0);
   const h0 = Math.round((dur0 || 480) / 6) / 10;   /* 분 → 시간 (소수 1자리) */
 
   const workerOpts = ordered.map(w =>
