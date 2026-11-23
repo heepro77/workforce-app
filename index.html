@@ -1815,6 +1815,7 @@ function openDbStatus(){
     sub: '🟢 실시간 연결되면 관리자 3명이 같은 데이터를 봅니다',
     body: body,
     submitLabel: '닫기',
+    cancelLabel: false,
     onSubmit: (wrap, close) => close()
   });
 }
@@ -2387,7 +2388,7 @@ function openModal(opts){
       '<div class="modal-body">' + (opts.body || '') + '</div>' +
       (opts.noFooter ? '' :
         '<div class="modal-ft">' +
-          '<button type="button" class="btn ghost" data-close>취소</button>' +
+          (opts.cancelLabel === false ? '' : '<button type="button" class="btn ghost" data-close>취소</button>') +
           '<button type="button" class="btn primary" data-submit>' + esc(opts.submitLabel || '저장') + '</button>' +
         '</div>') +
     '</div>';
@@ -3472,6 +3473,7 @@ function openSettings(){
     sub: SYNC.state === 'live' ? 'DB 실시간 연결 · 관리자 3명이 함께 사용' : 'DB 연결 전 · 이 브라우저에 저장됩니다',
     body,
     submitLabel: '닫기',
+    cancelLabel: false,
     onSubmit: (wrap, close) => close()
   });
 }
