@@ -3488,7 +3488,9 @@ function decodeContactBytes(data){
   if (typeof data === 'string') return data;
   let bytes;
   if (data instanceof ArrayBuffer) bytes = new Uint8Array(data);
-  else if (data && data.buffer instanceof ArrayBuffer) bytes = new Uint8Array(data.buffer, data.byteOffset || 0, data.byteLength || data.buffer.byteLength);
+  /* 다른 영역(iframe·테스트 환경)에서 온 ArrayBuffer 도 받아들인다 */
+  else if (data && typeof data.byteLength === 'number' && data.buffer === undefined) bytes = new Uint8Array(data);
+  else if (data && data.buffer) bytes = new Uint8Array(data.buffer, data.byteOffset || 0, data.byteLength || data.buffer.byteLength);
   else return String(data == null ? '' : data);
 
   if (typeof TextDecoder !== 'undefined'){
