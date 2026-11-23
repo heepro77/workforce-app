@@ -1,0 +1,119 @@
+-- ============================================================
+-- 인력관리 앱 (heepro77/workforce-app) · Supabase 스키마
+-- Supabase 대시보드 → SQL Editor 에 붙여넣고 Run 하세요.
+-- 여러 번 실행해도 안전합니다(if not exists / drop policy if exists).
+-- ============================================================
+
+create table if not exists public.wf_workers (
+  id text primary key,
+  name text,
+  phone text,
+  status text,
+  hourly_rate integer,
+  bank text,
+  age integer,
+  personality text,
+  looks text,
+  memo text,
+  created_at timestamptz default now()
+);
+
+create table if not exists public.wf_clients (
+  id text primary key,
+  name text,
+  manager text,
+  phone text,
+  address text,
+  memo text,
+  created_at timestamptz default now()
+);
+
+create table if not exists public.wf_logs (
+  id text primary key,
+  worker_id text,
+  worker_name text,
+  date text,
+  start_time text,
+  end_time text,
+  hours numeric,
+  hourly_rate integer,
+  pay integer,
+  pay_manual boolean default false,
+  client_id text,
+  place text,
+  memo text,
+  client_paid boolean default false,
+  client_paid_date text,
+  client_paid_by text,
+  worker_paid boolean default false,
+  worker_paid_date text,
+  worker_paid_by text,
+  created_by text,
+  created_at timestamptz default now()
+);
+
+create table if not exists public.wf_sms (
+  id text primary key,
+  mode text,
+  recipients text[],
+  count integer,
+  body text,
+  sent_by text,
+  sent_at text,
+  created_at timestamptz default now()
+);
+
+create table if not exists public.wf_messages (
+  id text primary key,
+  sender text,
+  body text,
+  tag text,
+  created_at timestamptz default now()
+);
+
+-- ------------------------------------------------------------
+-- 실시간 반영: 5개 테이블을 supabase_realtime publication 에 등록
+-- ------------------------------------------------------------
+do $$
+declare
+  t text;
+begin
+  foreach t in array array['wf_workers', 'wf_clients', 'wf_logs', 'wf_sms', 'wf_messages']
+  loop
+    if not exists (
+      select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t
+    ) then
+      execute format('alter publication supabase_realtime add table public.%I', t);
+    end if;
+  end loop;
+end $$;
+
+-- ------------------------------------------------------------
+-- 접근 권한: 공개 페이지에서 publishable(anon) 키로 읽고 쓰기
+-- (사내 데모용 설정입니다. 실제 개인정보는 넣지 마세요.)
+-- ------------------------------------------------------------
+alter table public.wf_workers  enable row level security;
+alter table public.wf_clients  enable row level security;
+alter table public.wf_logs     enable row level security;
+alter table public.wf_sms      enable row level security;
+alter table public.wf_messages enable row level security;
+
+drop policy if exists wf_anon_all on public.wf_workers;
+create policy wf_anon_all on public.wf_workers  for all to anon, authenticated using (true) with check (true);
+
+drop policy if exists wf_anon_all on public.wf_clients;
+create policy wf_anon_all on public.wf_clients  for all to anon, authenticated using (true) with check (true);
+
+drop policy if exists wf_anon_all on public.wf_logs;
+create policy wf_anon_all on public.wf_logs     for all to anon, authenticated using (true) with check (true);
+
+drop policy if exists wf_anon_all on public.wf_sms;
+create policy wf_anon_all on public.wf_sms      for all to anon, authenticated using (true) with check (true);
+
+drop policy if exists wf_anon_all on public.wf_messages;
+create policy wf_anon_all on public.wf_messages for all to anon, authenticated using (true) with check (true);
+
+grant select, insert, update, delete on
+  public.wf_workers, public.wf_clients, public.wf_logs, public.wf_sms, public.wf_messages
+  to anon, authenticated;
