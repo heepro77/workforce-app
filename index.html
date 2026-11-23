@@ -5190,6 +5190,13 @@ DB = loadDB();
 if (!DB.currentAdminId || !adminById(DB.currentAdminId)) DB.currentAdminId = (DB.admins[0] || {}).id;
 render();
 initDb();
+
+/* 홈 화면에 추가(설치형 앱) — 캐시 없는 최소 서비스 워커 */
+if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator && location.protocol === 'https:'){
+  window.addEventListener('load', () => {
+    try { navigator.serviceWorker.register('sw.js').catch(() => {}); } catch(e){}
+  });
+}
 </script>
 </body>
 </html>
