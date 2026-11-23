@@ -62,6 +62,10 @@ alter table public.wf_logs add column if not exists off_at text;
 alter table public.wf_logs add column if not exists allowance integer default 0;
 alter table public.wf_logs add column if not exists allowance_memo text;
 
+-- 기록을 마지막으로 고친 관리자 (created_by = 처음 기록한 관리자)
+alter table public.wf_logs add column if not exists updated_by text;
+alter table public.wf_logs add column if not exists updated_at timestamptz;
+
 create table if not exists public.wf_sms (
   id text primary key,
   mode text,
@@ -83,6 +87,21 @@ create table if not exists public.wf_expenses (
   created_at timestamptz default now()
 );
 
+alter table public.wf_expenses add column if not exists updated_by text;
+
+-- ------------------------------------------------------------
+-- 관리자 계정: 이름·역할·비밀번호 해시 (관리자 3명 기기에서 함께 쓴다)
+-- 비밀번호는 앱에서 SHA-256 해시로만 넣는다. 평문은 저장하지 않는다.
+-- ------------------------------------------------------------
+create table if not exists public.wf_admins (
+  id text primary key,
+  name text,
+  role text,
+  pass_hash text,
+  updated_by text,
+  updated_at timestamptz default now()
+);
+
 create table if not exists public.wf_messages (
   id text primary key,
   sender text,
@@ -98,7 +117,7 @@ do $$
 declare
   t text;
 begin
-  foreach t in array array['wf_workers', 'wf_clients', 'wf_logs', 'wf_sms', 'wf_messages', 'wf_expenses']
+  foreach t in array array['wf_workers', 'wf_clients', 'wf_logs', 'wf_sms', 'wf_messages', 'wf_expenses', 'wf_admins']
   loop
     if not exists (
       select 1 from pg_publication_tables
@@ -119,6 +138,7 @@ alter table public.wf_logs     enable row level security;
 alter table public.wf_sms      enable row level security;
 alter table public.wf_messages enable row level security;
 alter table public.wf_expenses enable row level security;
+alter table public.wf_admins   enable row level security;
 
 drop policy if exists wf_anon_all on public.wf_workers;
 create policy wf_anon_all on public.wf_workers  for all to anon, authenticated using (true) with check (true);
@@ -138,6 +158,10 @@ create policy wf_anon_all on public.wf_messages for all to anon, authenticated u
 drop policy if exists wf_anon_all on public.wf_expenses;
 create policy wf_anon_all on public.wf_expenses for all to anon, authenticated using (true) with check (true);
 
+drop policy if exists wf_anon_all on public.wf_admins;
+create policy wf_anon_all on public.wf_admins   for all to anon, authenticated using (true) with check (true);
+
 grant select, insert, update, delete on
-  public.wf_workers, public.wf_clients, public.wf_logs, public.wf_sms, public.wf_messages, public.wf_expenses
+  public.wf_workers, public.wf_clients, public.wf_logs, public.wf_sms, public.wf_messages, public.wf_expenses,
+  public.wf_admins
   to anon, authenticated;

@@ -583,6 +583,79 @@
   .on-ask-msg b{color:var(--brand);font-weight:900}
   .on-ask-msg #onAskTime{font-variant-numeric:tabular-nums;font-size:17px;color:#1c43c9}
   .on-ask .form-note{margin:0;line-height:1.55}
+
+  /* ---------- 기록 작성자 배지 ---------- */
+  .by-badge{
+    display:inline-block;font-size:10px;font-weight:800;letter-spacing:-.1px;
+    background:#eef1f5;color:#4b5563;border:1px solid #e2e7ee;border-radius:999px;
+    padding:1px 7px;line-height:1.5;white-space:nowrap;vertical-align:middle;
+  }
+  .rs-m .by-badge{margin-left:2px}
+  .roster-by{margin-top:3px}
+  .msg-time .by-badge{margin-left:4px}
+
+  /* ---------- 로그인 화면 ---------- */
+  body.locked{padding-bottom:0}
+  body.locked .app-header,
+  body.locked .tabbar{display:none}
+  body.locked main{padding:0}
+  .login-wrap{
+    min-height:100vh;min-height:100dvh;padding:34px 22px 28px;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;
+    background:linear-gradient(180deg,#eef2ff 0%,var(--bg) 42%,var(--bg) 100%);
+  }
+  .login-mark{
+    width:64px;height:64px;border-radius:20px;display:grid;place-items:center;font-size:30px;
+    background:linear-gradient(135deg,#2b5cff 0%,#1c43c9 100%);color:#fff;
+    box-shadow:0 12px 26px rgba(43,92,255,.30);
+  }
+  .login-title{font-size:22px;font-weight:900;letter-spacing:-.6px;margin:14px 0 4px}
+  .login-sub{font-size:12.5px;font-weight:700;color:var(--muted);margin:0 0 18px;text-align:center}
+  .login-admins{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;width:100%;max-width:420px}
+  .login-adm{
+    display:flex;flex-direction:column;align-items:center;gap:3px;
+    background:#fff;border:1.5px solid var(--line);border-radius:16px;padding:12px 6px;
+    box-shadow:var(--shadow);font-family:inherit;
+  }
+  .login-adm .av{
+    width:34px;height:34px;border-radius:50%;background:var(--brand-soft);color:var(--brand-deep);
+    display:grid;place-items:center;font-size:15px;font-weight:900;
+  }
+  .login-adm .nm{font-size:12.5px;font-weight:800;line-height:1.3;text-align:center;word-break:keep-all}
+  .login-adm .rl{font-size:10.5px;font-weight:700;color:var(--muted)}
+  .login-adm.on{border-color:var(--brand);background:#f5f8ff;box-shadow:0 4px 14px rgba(43,92,255,.16)}
+  .login-adm.on .av{background:var(--brand);color:#fff}
+  .login-pass{width:100%;max-width:420px;margin:16px 0 0;display:block}
+  .login-pass span{display:block;font-size:11.5px;font-weight:800;color:#4b5563;margin:0 2px 5px}
+  .login-pass input{
+    width:100%;border:1.5px solid var(--line);border-radius:14px;padding:14px 15px;
+    font-size:17px;font-weight:700;letter-spacing:2px;background:#fff;outline:none;text-align:center;
+  }
+  .login-pass input:focus{border-color:#b9c7ef;box-shadow:0 0 0 3px rgba(43,92,255,.12)}
+  .login-btn{
+    width:100%;max-width:420px;margin-top:10px;padding:14px;font-size:15.5px;font-weight:900;border-radius:14px;
+  }
+  .login-msg{min-height:18px;margin:9px 0 0;font-size:12px;font-weight:800;color:var(--red);text-align:center}
+  .login-note{max-width:420px;margin:8px 0 0;text-align:center}
+
+  /* ---------- 설정: 관리자 계정 ---------- */
+  .adm-acct{
+    border:1px solid var(--line);border-radius:12px;padding:10px;background:#fbfcfd;display:grid;gap:7px;
+  }
+  .adm-acct.on{border-color:#c9d8ff;background:#f7faff}
+  .adm-acct-h{display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:800}
+  .adm-acct-h b{font-size:13px}
+  .adm-acct .row2{gap:7px}
+  .adm-acct input{
+    border:1px solid var(--line);border-radius:10px;padding:9px 10px;font-size:13.5px;background:#fff;outline:none;min-width:0;
+  }
+  .adm-acct input:focus{border-color:#b9c7ef;box-shadow:0 0 0 3px rgba(43,92,255,.10)}
+  .sql-hint{
+    border:1px solid #f2e0b0;background:var(--amber-soft);border-radius:12px;padding:10px 12px;margin:0 0 10px;
+  }
+  .sql-hint b{font-size:12.5px;color:var(--amber)}
+  .sql-hint p{font-size:11.5px;font-weight:600;color:#6b5300;line-height:1.55;margin:5px 0 8px}
+  .sql-hint .btn{padding:8px 12px;font-size:12px}
 </style>
 </head>
 <body>
@@ -684,6 +757,10 @@ alter table public.wf_logs add column if not exists off_at text;
 alter table public.wf_logs add column if not exists allowance integer default 0;
 alter table public.wf_logs add column if not exists allowance_memo text;
 
+-- 기록을 마지막으로 고친 관리자 (created_by = 처음 기록한 관리자)
+alter table public.wf_logs add column if not exists updated_by text;
+alter table public.wf_logs add column if not exists updated_at timestamptz;
+
 create table if not exists public.wf_sms (
   id text primary key,
   mode text,
@@ -705,6 +782,21 @@ create table if not exists public.wf_expenses (
   created_at timestamptz default now()
 );
 
+alter table public.wf_expenses add column if not exists updated_by text;
+
+-- ------------------------------------------------------------
+-- 관리자 계정: 이름·역할·비밀번호 해시 (관리자 3명 기기에서 함께 쓴다)
+-- 비밀번호는 앱에서 SHA-256 해시로만 넣는다. 평문은 저장하지 않는다.
+-- ------------------------------------------------------------
+create table if not exists public.wf_admins (
+  id text primary key,
+  name text,
+  role text,
+  pass_hash text,
+  updated_by text,
+  updated_at timestamptz default now()
+);
+
 create table if not exists public.wf_messages (
   id text primary key,
   sender text,
@@ -720,7 +812,7 @@ do $$
 declare
   t text;
 begin
-  foreach t in array array['wf_workers', 'wf_clients', 'wf_logs', 'wf_sms', 'wf_messages', 'wf_expenses']
+  foreach t in array array['wf_workers', 'wf_clients', 'wf_logs', 'wf_sms', 'wf_messages', 'wf_expenses', 'wf_admins']
   loop
     if not exists (
       select 1 from pg_publication_tables
@@ -741,6 +833,7 @@ alter table public.wf_logs     enable row level security;
 alter table public.wf_sms      enable row level security;
 alter table public.wf_messages enable row level security;
 alter table public.wf_expenses enable row level security;
+alter table public.wf_admins   enable row level security;
 
 drop policy if exists wf_anon_all on public.wf_workers;
 create policy wf_anon_all on public.wf_workers  for all to anon, authenticated using (true) with check (true);
@@ -760,8 +853,12 @@ create policy wf_anon_all on public.wf_messages for all to anon, authenticated u
 drop policy if exists wf_anon_all on public.wf_expenses;
 create policy wf_anon_all on public.wf_expenses for all to anon, authenticated using (true) with check (true);
 
+drop policy if exists wf_anon_all on public.wf_admins;
+create policy wf_anon_all on public.wf_admins   for all to anon, authenticated using (true) with check (true);
+
 grant select, insert, update, delete on
-  public.wf_workers, public.wf_clients, public.wf_logs, public.wf_sms, public.wf_messages, public.wf_expenses
+  public.wf_workers, public.wf_clients, public.wf_logs, public.wf_sms, public.wf_messages, public.wf_expenses,
+  public.wf_admins
   to anon, authenticated;
 
 </script>
@@ -1151,7 +1248,8 @@ const ui = {
   smsBody: '',
   ledgerMonth: 'current',
   chatBody: '',
-  chatTag: ''
+  chatTag: '',
+  loginAdmin: ''
 };
 
 /* ============================================================
@@ -1195,7 +1293,9 @@ const SYNC = {
   rt: 'off',          /* off · on · err */
   counts: null,
   busy: false,
-  lastLoadAt: 0
+  lastLoadAt: 0,
+  adminsMissing: false,   /* wf_admins 표가 아직 없으면 로그인·비밀번호는 이 기기에서만 */
+  adminsError: ''
 };
 let renderDirty = false;
 
@@ -1295,7 +1395,9 @@ function rowLog(r){
     workerPaidDate: r.worker_paid_date || null,
     workerPaidBy: r.worker_paid_by || null,
     createdBy: r.created_by || '',
+    updatedBy: r.updated_by || '',
     createdAt: r.created_at || null,
+    updatedAt: r.updated_at || null,
     onAt: r.on_at || null,
     offAt: r.off_at || null
   };
@@ -1324,7 +1426,9 @@ function colLog(s){
     worker_paid_date: s.workerPaidDate || null,
     worker_paid_by: s.workerPaidBy || null,
     created_by: s.createdBy || '',
+    updated_by: s.updatedBy || '',
     created_at: s.createdAt || new Date().toISOString(),
+    updated_at: s.updatedAt || null,
     on_at: s.onAt || null,
     off_at: s.offAt || null
   };
@@ -1362,6 +1466,7 @@ function rowExpense(r){
     amount: num(r.amount),
     memo: r.memo || '',
     createdBy: r.created_by || '',
+    updatedBy: r.updated_by || '',
     createdAt: r.created_at || null
   };
 }
@@ -1373,6 +1478,7 @@ function colExpense(e){
     amount: Math.round(num(e.amount)),
     memo: e.memo || '',
     created_by: e.createdBy || '',
+    updated_by: e.updatedBy || '',
     created_at: e.createdAt || new Date().toISOString()
   };
 }
@@ -1579,6 +1685,7 @@ async function loadFromDb(){
   if (!SYNC.client || SYNC.busy) return false;
   SYNC.busy = true;
   setDbState('connecting', '');
+  await loadAdminsFromDb();
   const res = {};
   await Promise.all(TABLE_LIST.map(async k => { res[k] = await fetchTable(k); }));
 
@@ -1667,6 +1774,9 @@ function subscribeRealtime(){
       if (SYNC.counts && SYNC.counts[k] && !SYNC.counts[k].ok) return;   /* 없는 표는 구독하지 않는다 */
       ch.on('postgres_changes', { event: '*', schema: 'public', table: TABLES[k] }, payload => onRealtime(k, payload));
     });
+    if (!adminTableMissing()){
+      ch.on('postgres_changes', { event: '*', schema: 'public', table: ADMINS_TABLE }, payload => onAdminChange(payload));
+    }
     ch.subscribe(status => {
       if (status === 'SUBSCRIBED'){ SYNC.rt = 'on'; }
       else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED'){ SYNC.rt = 'err'; }
@@ -1930,9 +2040,12 @@ function openDbStatus(){
     return '<div class="tbl-row"><span class="tbl-dot ' + (ok ? 'on' : 'off') + '"></span>' +
       '<b>' + esc(TABLE_LABEL[k]) + '</b><span class="muted">' + esc(cnt) + '</span></div>';
   }).join('');
+  const admRow = '<div class="tbl-row"><span class="tbl-dot ' + ((SYNC.state === 'live' && !adminTableMissing()) ? 'on' : 'off') + '"></span>' +
+    '<b>wf_admins (관리자 계정)</b><span class="muted">' +
+    esc(SYNC.state === 'live' ? (adminTableMissing() ? '없음 · 이 기기에만 저장' : '연결됨 · 3명 공유') : '확인 전') + '</span></div>';
   const body =
     '<p class="form-note" style="font-size:12.5px;color:#3b4450;font-weight:700">' + esc(dbStateLine()) + '</p>' +
-    '<div class="tbl-box">' + rows + '</div>' +
+    '<div class="tbl-box">' + rows + admRow + '</div>' +
     (SYNC.error ? '<p class="form-note">최근 오류: ' + esc(SYNC.error) + '</p>' : '') +
     '<p class="form-note">Supabase 프로젝트 <b>jcwqckpeermclndcerqq</b> · 실시간 구독 ' +
       (SYNC.rt === 'on' ? '<b style="color:#0b7a45">연결됨</b>' : (SYNC.rt === 'err' ? '<b style="color:#b3261e">오류</b>' : '대기')) + '</p>' +
@@ -1951,19 +2064,54 @@ function openDbStatus(){
     onSubmit: (wrap, close) => close()
   });
 }
-function saveAdminNames(){
+/* 설정 창: 관리자 이름·역할과 비밀번호를 함께 저장한다 */
+function saveAdminAccounts(){
   const wrap = document.querySelector('.modal-wrap');
   if (!wrap){ toast('설정 창을 다시 열어 주세요'); return; }
+  const names = {}, roles = {}, passes = {};
+  let bad = '';
   DB.admins.forEach(a => {
     const nameEl = wrap.querySelector('[data-admname="' + a.id + '"]');
     const roleEl = wrap.querySelector('[data-admrole="' + a.id + '"]');
-    if (nameEl){ const v = String(nameEl.value || '').trim(); if (v) a.name = v; }
-    if (roleEl) a.role = String(roleEl.value || '').trim();
+    const p1 = wrap.querySelector('[data-admpass="' + a.id + '"]');
+    const p2 = wrap.querySelector('[data-admpass2="' + a.id + '"]');
+    const nm = nameEl ? String(nameEl.value || '').trim() : a.name;
+    if (!nm) bad = bad || '관리자 이름을 입력해 주세요';
+    names[a.id] = nm;
+    roles[a.id] = roleEl ? String(roleEl.value || '').trim() : (a.role || '');
+    const v1 = p1 ? String(p1.value || '') : '';
+    const v2 = p2 ? String(p2.value || '') : '';
+    if (v1 || v2){
+      if (v1.length < 4) bad = bad || '비밀번호는 4자리 이상으로 정해 주세요';
+      else if (v1 !== v2) bad = bad || '새 비밀번호 확인이 서로 다릅니다';
+      else passes[a.id] = v1;
+    }
+  });
+  if (bad){ toast(bad); return; }
+
+  const changed = [];
+  DB.admins.forEach(a => {
+    if (names[a.id] !== undefined && names[a.id] !== a.name){ a.name = names[a.id]; changed.push(a.id); }
+    if (roles[a.id] !== (a.role || '')){ a.role = roles[a.id]; if (changed.indexOf(a.id) < 0) changed.push(a.id); }
+    if (passes[a.id]){ a.passHash = passHashOf(a.id, passes[a.id]); if (changed.indexOf(a.id) < 0) changed.push(a.id); }
   });
   saveDB();
+  const syncing = DB.admins.filter(a => changed.indexOf(a.id) >= 0);
+  Promise.all(syncing.map(syncAdminRow)).then(oks => {
+    const anyFail = oks.some(ok => !ok);
+    if (!syncing.length) return;
+    toast(anyFail
+      ? '관리자 이름·비밀번호를 이 기기에 저장했습니다 · wf_admins 표가 없어 다른 기기에는 아직 반영되지 않습니다'
+      : '관리자 이름·비밀번호를 저장했습니다 · 관리자 기기와 함께 맞춰집니다');
+    try { renderHeader(); } catch(e){}
+    if (document.querySelector('.modal-wrap')){
+      const line = document.getElementById('admSyncLine');
+      if (line) line.textContent = adminDbStateLine();
+    }
+  });
   renderHeader();
   render();
-  toast('관리자 이름을 저장했습니다');
+  toast('관리자 이름·비밀번호를 저장했습니다');
 }
 
 /* 메신저·DB 관련 버튼 */
@@ -1981,7 +2129,7 @@ document.addEventListener('click', ev => {
   else if (act === 'db-status'){ openDbStatus(); }
   else if (act === 'db-reconnect'){ reconnectDb(); toast('다시 연결합니다…'); }
   else if (act === 'copy-sql'){ copySchema(); }
-  else if (act === 'save-admins'){ ev.preventDefault(); saveAdminNames(); }
+  else if (act === 'save-admins'){ ev.preventDefault(); saveAdminAccounts(); }
 });
 
 document.addEventListener('keydown', ev => {
@@ -1993,6 +2141,399 @@ document.addEventListener('keydown', ev => {
 
 document.addEventListener('input', ev => {
   if (ev.target && ev.target.id === 'chatInput') ui.chatBody = ev.target.value;
+});
+
+
+/* ============================================================
+   관리자 로그인 · 비밀번호 · 기록 작성자 표시
+   - 앱에 들어가면 관리자를 고르고 비밀번호를 넣어야 데이터가 보인다
+   - 비밀번호는 SHA-256 해시로만 저장한다 (기본 1234)
+   - 관리자 이름·비밀번호는 wf_admins 표로 관리자 3명 기기 사이에 맞춘다
+     (표가 없으면 이 기기에만 저장하고 설정에 SQL 안내를 띄운다)
+   ============================================================ */
+const SESSION_KEY = 'wfp_session';
+const ADMINS_TABLE = 'wf_admins';
+const DEFAULT_ADMIN_PASS = '1234';
+const PASS_PEPPER = 'wfp-adm-v1';
+const AUTH = { adminId: '', at: 0 };
+
+/* ---------- SHA-256 (외부 라이브러리 없이 어디서나 같은 값) ---------- */
+function sha256Utf8Bytes(s){
+  const out = [];
+  for (let i = 0; i < s.length; i++){
+    const c = s.charCodeAt(i);
+    if (c < 0x80) out.push(c);
+    else if (c < 0x800){ out.push(0xc0 | (c >> 6), 0x80 | (c & 63)); }
+    else if (c >= 0xd800 && c <= 0xdbff && i + 1 < s.length){
+      const c2 = s.charCodeAt(i + 1);
+      if (c2 >= 0xdc00 && c2 <= 0xdfff){
+        const cp = 0x10000 + ((c - 0xd800) << 10) + (c2 - 0xdc00);
+        out.push(0xf0 | (cp >> 18), 0x80 | ((cp >> 12) & 63), 0x80 | ((cp >> 6) & 63), 0x80 | (cp & 63));
+        i++;
+      } else out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+    } else out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+  }
+  return out;
+}
+const SHA256_K = [
+  0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+  0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+  0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+  0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+  0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+  0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+  0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+  0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
+];
+function sha256Hex(str){
+  const bytes = sha256Utf8Bytes(String(str == null ? '' : str));
+  const bitLen = bytes.length * 8;
+  bytes.push(0x80);
+  while (bytes.length % 64 !== 56) bytes.push(0);
+  const hi = Math.floor(bitLen / 0x100000000), lo = bitLen >>> 0;
+  bytes.push((hi >>> 24) & 255, (hi >>> 16) & 255, (hi >>> 8) & 255, hi & 255);
+  bytes.push((lo >>> 24) & 255, (lo >>> 16) & 255, (lo >>> 8) & 255, lo & 255);
+
+  let h0 = 0x6a09e667, h1 = 0xbb67ae85, h2 = 0x3c6ef372, h3 = 0xa54ff53a,
+      h4 = 0x510e527f, h5 = 0x9b05688c, h6 = 0x1f83d9ab, h7 = 0x5be0cd19;
+  const w = new Array(64);
+  const rotr = (x, n) => (x >>> n) | (x << (32 - n));
+  for (let off = 0; off < bytes.length; off += 64){
+    for (let i = 0; i < 16; i++){
+      w[i] = ((bytes[off + i * 4] << 24) | (bytes[off + i * 4 + 1] << 16) |
+              (bytes[off + i * 4 + 2] << 8) | bytes[off + i * 4 + 3]) >>> 0;
+    }
+    for (let i = 16; i < 64; i++){
+      const s0 = rotr(w[i-15], 7) ^ rotr(w[i-15], 18) ^ (w[i-15] >>> 3);
+      const s1 = rotr(w[i-2], 17) ^ rotr(w[i-2], 19) ^ (w[i-2] >>> 10);
+      w[i] = (w[i-16] + s0 + w[i-7] + s1) >>> 0;
+    }
+    let a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, h = h7;
+    for (let i = 0; i < 64; i++){
+      const S1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25);
+      const ch = (e & f) ^ ((~e) & g);
+      const t1 = (h + S1 + ch + SHA256_K[i] + w[i]) >>> 0;
+      const S0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22);
+      const maj = (a & b) ^ (a & c) ^ (b & c);
+      const t2 = (S0 + maj) >>> 0;
+      h = g; g = f; f = e; e = (d + t1) >>> 0;
+      d = c; c = b; b = a; a = (t1 + t2) >>> 0;
+    }
+    h0 = (h0 + a) >>> 0; h1 = (h1 + b) >>> 0; h2 = (h2 + c) >>> 0; h3 = (h3 + d) >>> 0;
+    h4 = (h4 + e) >>> 0; h5 = (h5 + f) >>> 0; h6 = (h6 + g) >>> 0; h7 = (h7 + h) >>> 0;
+  }
+  return [h0, h1, h2, h3, h4, h5, h6, h7].map(x => ('00000000' + x.toString(16)).slice(-8)).join('');
+}
+
+/* ---------- 비밀번호 해시 · 확인 ---------- */
+function passHashOf(adminId, pass){
+  return sha256Hex(PASS_PEPPER + '|' + String(adminId || '') + '|' + String(pass == null ? '' : pass));
+}
+function adminPassHash(a){
+  if (!a) return '';
+  return String(a.passHash || '') || passHashOf(a.id, DEFAULT_ADMIN_PASS);
+}
+function checkAdminPass(adminId, pass){
+  const a = adminById(adminId);
+  if (!a) return false;
+  return adminPassHash(a) === passHashOf(adminId, pass);
+}
+function adminHasOwnPass(a){ return !!(a && a.passHash); }
+
+/* ---------- 로그인 세션 (localStorage) ---------- */
+function sessionLoad(){
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const o = JSON.parse(raw);
+    if (o && o.adminId && adminById(o.adminId)){
+      AUTH.adminId = o.adminId;
+      AUTH.at = Number(o.at) || 0;
+      return o;
+    }
+  } catch(e){ /* 손상된 세션은 로그인 화면으로 */ }
+  return null;
+}
+function sessionSave(adminId){
+  AUTH.adminId = adminId;
+  AUTH.at = Date.now();
+  try { localStorage.setItem(SESSION_KEY, JSON.stringify({ adminId: adminId, at: AUTH.at })); } catch(e){}
+}
+function sessionClear(){
+  AUTH.adminId = '';
+  AUTH.at = 0;
+  try { localStorage.removeItem(SESSION_KEY); } catch(e){}
+}
+function isLoggedIn(){ return !!AUTH.adminId && !!adminById(AUTH.adminId); }
+
+/* ---------- 로그인 화면 ---------- */
+function loginPickId(){
+  return ui.loginAdmin || DB.currentAdminId || ((DB.admins[0] || {}).id || '');
+}
+function adminInitial(a){
+  const name = String((a && a.name) || '').trim();
+  const m = name.match(/관리자\s*([0-9]+)/);
+  if (m) return m[1].slice(-1);
+  return name.slice(0, 1) || '?';
+}
+function viewLogin(){
+  const pick = loginPickId();
+  const admins = DB.admins.map(a =>
+    '<button type="button" class="login-adm' + (a.id === pick ? ' on' : '') + '" data-act="login-pick" data-id="' + esc(a.id) + '"' +
+      ' role="radio" aria-checked="' + (a.id === pick ? 'true' : 'false') + '">' +
+      '<span class="av">' + esc(adminInitial(a)) + '</span>' +
+      '<span class="nm">' + esc(a.name || '관리자') + '</span>' +
+      '<span class="rl">' + esc(a.role || '') + '</span>' +
+    '</button>').join('');
+
+  return '<div class="login-wrap">' +
+    '<div class="login-mark">🏗</div>' +
+    '<h2 class="login-title">인력관리</h2>' +
+    '<p class="login-sub">관리자를 선택하고 비밀번호를 입력하세요</p>' +
+    '<div class="login-admins" role="radiogroup" aria-label="관리자 선택">' + admins + '</div>' +
+    '<label class="login-pass"><span>비밀번호</span>' +
+      '<input id="loginPass" type="password" autocomplete="current-password" placeholder="비밀번호">' +
+    '</label>' +
+    '<button type="button" class="btn primary login-btn" data-act="login">로그인</button>' +
+    '<p class="login-msg" id="loginMsg" role="status"></p>' +
+    '<p class="form-note login-note">처음 비밀번호는 <b>' + DEFAULT_ADMIN_PASS + '</b>입니다.<br>로그인한 뒤 <b>설정</b>에서 관리자별 이름과 비밀번호를 바꿀 수 있습니다.</p>' +
+  '</div>';
+}
+
+function renderLocked(){
+  document.body.classList.add('locked');
+  const view = $('#view');
+  if (view) view.innerHTML = viewLogin();
+  const chip = $('#dbChip');
+  if (chip && SYNC && SYNC.state === 'live'){ /* 잠긴 화면에서는 상태를 숨긴다 */ chip.hidden = true; }
+}
+
+function doLogin(){
+  const passEl = $('#loginPass');
+  const msg = $('#loginMsg');
+  const said = text => { if (msg) msg.textContent = text; };
+  const adminId = loginPickId();
+  const pass = passEl ? String(passEl.value || '') : '';
+  if (!adminId || !adminById(adminId)){ said('관리자를 선택해 주세요'); return; }
+  if (!pass){ said('비밀번호를 입력해 주세요'); if (passEl) passEl.focus(); return; }
+  if (!checkAdminPass(adminId, pass)){
+    said('비밀번호가 맞지 않습니다');
+    if (passEl){ passEl.value = ''; passEl.focus(); }
+    return;
+  }
+  sessionSave(adminId);
+  DB.currentAdminId = adminId;
+  try { saveDB(); } catch(e){}
+  document.body.classList.remove('locked');
+  const chip = $('#dbChip');
+  if (chip) chip.hidden = false;
+  render();
+  initDb();
+  toast(aName(adminId) + ' 님으로 로그인했습니다');
+}
+
+function doLogout(){
+  if (!isLoggedIn()){ render(); return; }
+  const who = aName(AUTH.adminId);
+  sessionClear();
+  ui.tab = 'home';
+  ui.smsSel = new Set();
+  while (document.querySelector('.modal-wrap')) closeTopModalFromUi();
+  render();
+  toast(who + ' 님 로그아웃 · 비밀번호를 입력해 다시 들어올 수 있습니다');
+}
+
+/* ---------- 관리자 전환 (비밀번호 확인) ---------- */
+function openAdminSheet(){
+  const cur = curAdmin().id;
+  const body = DB.admins.map(a =>
+    '<label class="pick ' + (a.id === cur ? 'is-on' : '') + '">' +
+      '<input type="radio" name="adm" value="' + a.id + '"' + (a.id === cur ? ' checked' : '') + '>' +
+      '<div class="pick-body"><div class="pick-name">' + esc(a.name) + '</div><div class="pick-sub">' + esc(a.role || '') + '</div></div>' +
+      (a.id === cur ? '<span class="pick-tag on">현재</span>' : '<span class="pick-tag">전환</span>') +
+    '</label>'
+  ).join('') +
+  '<label class="f" style="margin-top:10px"><span>전환할 관리자의 비밀번호</span>' +
+    '<input type="password" id="admSwitchPass" autocomplete="off" placeholder="관리자 비밀번호"></label>' +
+  '<p class="form-note">다른 관리자로 바꿀 때는 그 관리자의 비밀번호가 필요합니다. 등록·문자·입금 처리 기록은 바꾼 관리자 이름으로 남습니다.</p>' +
+  '<button type="button" class="btn ghost wide" data-act="logout" style="margin-top:4px">로그아웃</button>';
+
+  openModal({
+    title: '관리자 전환',
+    sub: '지금 ' + aName(cur) + ' 님으로 로그인됨 · 관리자 ' + DB.admins.length + '명',
+    body,
+    submitLabel: '전환',
+    onSubmit: (wrap, close) => {
+      const v = $('input[name=adm]:checked', wrap);
+      if (!v) return;
+      const target = v.value;
+      if (target === curAdmin().id){ close(); return; }
+      const pe = $('#admSwitchPass', wrap);
+      const pass = pe ? String(pe.value || '') : '';
+      if (!pass){ toast('전환할 관리자의 비밀번호를 입력해 주세요'); if (pe) pe.focus(); return; }
+      if (!checkAdminPass(target, pass)){
+        toast('비밀번호가 맞지 않습니다');
+        if (pe){ pe.value = ''; pe.focus(); }
+        return;
+      }
+      sessionSave(target);
+      DB.currentAdminId = target;
+      saveDB();
+      close();
+      render();
+      toast(aName(target) + ' 님으로 전환했습니다');
+    }
+  });
+}
+
+/* ---------- wf_admins: 관리자 이름·비밀번호를 기기 사이에 맞춘다 ---------- */
+function adminRow(a){
+  return {
+    id: a.id,
+    name: a.name || '',
+    role: a.role || '',
+    pass_hash: adminPassHash(a),
+    updated_by: AUTH.adminId || a.id,
+    updated_at: new Date().toISOString()
+  };
+}
+function adminTableMissing(){ return !!(SYNC && SYNC.adminsMissing); }
+function adminDbStateLine(){
+  if (!SYNC.client || SYNC.state !== 'live') return '이 기기에만 저장됩니다 (DB 연결 대기)';
+  if (adminTableMissing()) return 'wf_admins 표가 없어 이 기기에만 저장됩니다';
+  return '관리자 3명 기기와 함께 맞춰집니다';
+}
+function syncAdminRow(a){
+  if (!SYNC.client || SYNC.state !== 'live') return Promise.resolve(false);
+  return SYNC.client.from(ADMINS_TABLE).upsert(adminRow(a), { onConflict: 'id' }).then(r => {
+    if (r && r.error){
+      if (isMissingTable(r.error)){
+        SYNC.adminsMissing = true;
+        SYNC.adminsError = String(r.error.message || '');
+      } else {
+        SYNC.adminsError = String(r.error.message || '');
+      }
+      return false;
+    }
+    SYNC.adminsMissing = false;
+    SYNC.adminsError = '';
+    return true;
+  }).catch(e => {
+    SYNC.adminsError = String((e && e.message) || e);
+    return false;
+  });
+}
+function adoptAdminRow(row){
+  if (!row || !row.id) return false;
+  let a = adminById(row.id);
+  if (!a){
+    a = { id: row.id, name: row.name || '관리자', role: row.role || '', passHash: row.pass_hash || '' };
+    DB.admins.push(a);
+    return true;
+  }
+  let changed = false;
+  if (row.name && row.name !== a.name){ a.name = row.name; changed = true; }
+  if (row.role !== undefined && row.role !== null && row.role !== a.role){ a.role = row.role; changed = true; }
+  if (row.pass_hash && row.pass_hash !== a.passHash){ a.passHash = row.pass_hash; changed = true; }
+  return changed;
+}
+function loadAdminsFromDb(){
+  if (!SYNC.client) return Promise.resolve(false);
+  const finish = r => {
+    const err = r && r.error;
+    if (err){
+      if (isMissingTable(err)){ SYNC.adminsMissing = true; SYNC.adminsError = String(err.message || ''); }
+      else if (!r) SYNC.adminsMissing = false;
+      return false;
+    }
+    SYNC.adminsMissing = false;
+    SYNC.adminsError = '';
+    const rows = Array.isArray(r.data) ? r.data : [];
+    if (!rows.length) return true;      /* 아직 올린 계정이 없으면 이 기기 기본값(1234)을 쓴다 */
+    let changed = false;
+    rows.forEach(row => { if (adoptAdminRow(row)) changed = true; });
+    if (changed){
+      if (!adminById(DB.currentAdminId)) DB.currentAdminId = (DB.admins[0] || {}).id;
+      if (AUTH.adminId && !adminById(AUTH.adminId)) sessionClear();
+      try { saveDB(); } catch(e){}
+    }
+    return true;
+  };
+  return new Promise(resolve => {
+    let done = false;
+    const once = r => { if (done) return; done = true; resolve(r || {}); };
+    const timer = setTimeout(() => once({ error: { message: '응답 시간 초과', code: 'timeout' } }), 12000);
+    try {
+      SYNC.client.from(ADMINS_TABLE).select('*').limit(50)
+        .then(r => { clearTimeout(timer); once(r); })
+        .catch(e => { clearTimeout(timer); once({ error: { message: String((e && e.message) || e) } }); });
+    } catch(e){ clearTimeout(timer); once({ error: { message: String((e && e.message) || e) } }); }
+  }).then(finish);
+}
+function onAdminChange(payload){
+  const type = payload && (payload.eventType || payload.event_type);
+  if (type === 'DELETE') return;
+  const row = (payload && payload.new) || null;
+  if (!row) return;
+  if (adoptAdminRow(row)){
+    try { saveDB(); } catch(e){}
+    try { renderHeader(); } catch(e){}
+    if (isLoggedIn()) scheduleRender();
+  }
+}
+
+/* ---------- 기록 작성자 배지 ---------- */
+function writerName(id){
+  if (!id) return '미기록';
+  const a = adminById(id);
+  return a ? (a.name || '관리자') : '알 수 없음';
+}
+function byBadge(id, prefix){
+  const label = prefix || '기록';
+  return '<span class="by-badge">' + esc(label) + ': ' + esc(writerName(id)) + '</span>';
+}
+function byBadgeOfRows(rows, prefix){
+  const ids = [];
+  (rows || []).forEach(r => {
+    const id = r && r.createdBy;
+    if (id && ids.indexOf(id) < 0) ids.push(id);
+  });
+  if (!ids.length) return byBadge('', prefix);
+  if (ids.length === 1) return byBadge(ids[0], prefix);
+  return '<span class="by-badge">' + esc(prefix || '기록') + ': ' + esc(writerName(ids[0])) + ' 외 ' + (ids.length - 1) + '명</span>';
+}
+
+/* 로그인 화면 입력 이벤트 */
+document.addEventListener('click', ev => {
+  const el = ev.target.closest('[data-act]');
+  if (!el) return;
+  if (el.dataset.act === 'login'){ ev.preventDefault(); doLogin(); return; }
+  if (el.dataset.act === 'login-pick'){
+    ev.preventDefault();
+    ui.loginAdmin = el.dataset.id || '';
+    $$('.login-adm').forEach(b => {
+      const on = b.dataset.id === ui.loginAdmin;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+    const pass = $('#loginPass');
+    if (pass) pass.focus();
+    return;
+  }
+  if (el.dataset.act === 'logout'){
+    ev.preventDefault();
+    if (!isLoggedIn()){ render(); return; }
+    confirmModal('로그아웃',
+      aName(AUTH.adminId) + ' 님 로그아웃합니다. 다시 들어올 때는 비밀번호가 필요합니다.',
+      '로그아웃', () => doLogout());
+  }
+});
+
+document.addEventListener('keydown', ev => {
+  if (ev.key === 'Enter' && ev.target && ev.target.id === 'loginPass'){
+    ev.preventDefault();
+    doLogin();
+  }
 });
 
 /* ============================================================
@@ -2020,6 +2561,8 @@ function renderTabbar(){
 }
 
 function render(){
+  if (!isLoggedIn()){ renderLocked(); return; }
+  document.body.classList.remove('locked');
   repairQpInDB(SYNC.state === 'live');
   if (!$$('.modal-wrap').length) navReplace({ tab: ui.tab });
   renderHeader();
@@ -2083,13 +2626,15 @@ function viewHome(){
               '</span>' +
               '<span class="rs-m">' + hoursLabel(s) + (isAdjusted(s) ? ' (고침)' : '') +
                 (num(s.wage) ? ' · ' + won(s.wage) + (allowanceOf(s) ? ' (수당 ' + won(allowanceOf(s)) + ')' : '') : ' · 일당 미정') +
-                (s.place ? ' · ' + esc(s.place) : '') + '</span>' +
+                (s.place ? ' · ' + esc(s.place) : '') +
+                ' ' + byBadge(s.createdBy) + '</span>' +
             '</div>').join('') + '</div>'
         : '';
 
       return '<div class="roster-item' + (on ? ' on' : '') + '">' +
         '<div class="roster-row' + (on ? ' on' : '') + '">' +
-          '<div class="roster-id"><b>' + esc(w.name) + '</b><span class="roster-sub">' + esc(sub) + '</span></div>' +
+          '<div class="roster-id"><b>' + esc(w.name) + '</b><span class="roster-sub">' + esc(sub) + '</span>' +
+            (open ? '<div class="roster-by">' + byBadge(open.createdBy) + '</div>' : '') + '</div>' +
           (open ? '<button class="mini" data-act="today-edit" data-id="' + open.id + '">시간·거래처</button>' : '') +
           (open ? '<button class="mini danger" data-act="del-shift" data-id="' + open.id + '">삭제</button>' : '') +
           '<button class="switch' + (on ? ' on' : '') + '" data-act="today-toggle" data-worker="' + w.id + '" aria-pressed="' + (on ? 'true' : 'false') + '" aria-label="' + esc(w.name) + ' 오늘 출역 ' + (on ? 'ON' : 'OFF') + '">' + (on ? 'ON' : 'OFF') + '</button>' +
@@ -2109,7 +2654,7 @@ function viewHome(){
     return '<div class="rec" style="margin-bottom:6px">' +
       '<div class="rec-top"><div class="rec-who" style="font-size:13px">' + esc(modeLabel) + ' 문자 <span class="badge cnt">' + m.count + '건</span></div>' +
       '<span class="msg-time">' + fmtDT(m.at) + '</span></div>' +
-      '<div class="rec-meta">' + esc((m.recipients || []).slice(0, 3).join(', ')) + ((m.recipients || []).length > 3 ? ' 외 ' + (m.recipients.length - 3) + '명' : '') + ' · ' + esc(aName(m.managerId)) + '</div>' +
+      '<div class="rec-meta">' + esc((m.recipients || []).slice(0, 3).join(', ')) + ((m.recipients || []).length > 3 ? ' 외 ' + (m.recipients.length - 3) + '명' : '') + ' ' + byBadge(m.managerId) + '</div>' +
       '</div>';
   }).join('') : '<div class="card muted" style="font-size:12.5px">아직 보낸 문자가 없습니다.</div>';
 
@@ -2209,7 +2754,8 @@ function recHTML(s){
     (allowanceOf(s) ? '<div class="rec-memo" style="color:#8a6400">수당 ' + won(allowanceOf(s)) + (s.allowanceMemo ? ' · ' + esc(s.allowanceMemo) : '') + '</div>' : '') +
     (open ? '' : '<div class="paygrid">' + payCellHTML(s, 'client') + payCellHTML(s, 'worker') + '</div>') +
     '<div class="rec-foot">' +
-      '<span class="rec-by">등록 ' + esc(aName(s.createdBy)) + '</span>' +
+      '<span class="rec-by">' + byBadge(s.createdBy) +
+        (s.updatedBy && s.updatedBy !== s.createdBy ? ' ' + byBadge(s.updatedBy, '수정') : '') + '</span>' +
       '<span class="rec-acts">' +
         (open ? '' : '<button class="mini" data-act="billing-sms" data-id="' + s.id + '">계좌 문자</button>') +
         '<button class="mini" data-act="edit-shift" data-id="' + s.id + '">' + (open ? '마감·거래처' : '수정') + '</button>' +
@@ -2546,7 +3092,7 @@ function msgHTML(m){
     '<div class="msg-top">' +
       '<div><span class="badge ' + (m.mode === 'client' ? 'reg' : 'res') + '">' + modeLabel + '</span> ' +
         '<span class="badge cnt">' + num(m.count) + '건</span></div>' +
-      '<span class="msg-time">' + fmtDT(m.at) + ' · ' + esc(aName(m.managerId)) + '</span>' +
+      '<span class="msg-time">' + fmtDT(m.at) + ' ' + byBadge(m.managerId) + '</span>' +
     '</div>' +
     '<div class="msg-body">' + esc(m.content) + '</div>' +
     '<div class="msg-to">받은 사람: ' + esc(names) + '</div>' +
@@ -2759,34 +3305,6 @@ function confirmModal(title, sub, label, onYes){
     submitLabel: label,
     body: '',
     onSubmit: (wrap, close) => { close(); onYes(); }
-  });
-}
-
-/* ---------- 관리자 전환 ---------- */
-function openAdminSheet(){
-  const body = DB.admins.map(a =>
-    '<label class="pick ' + (a.id === DB.currentAdminId ? 'is-on' : '') + '">' +
-      '<input type="radio" name="adm" value="' + a.id + '"' + (a.id === DB.currentAdminId ? ' checked' : '') + '>' +
-      '<div class="pick-body"><div class="pick-name">' + esc(a.name) + '</div><div class="pick-sub">' + esc(a.role) + '</div></div>' +
-      (a.id === DB.currentAdminId ? '<span class="pick-tag on">현재</span>' : '<span class="pick-tag">전환</span>') +
-    '</label>'
-  ).join('') +
-  '<p class="form-note">전환한 관리자 이름으로 근무 등록·거래처/인력 입금 처리·문자 발송이 기록됩니다.</p>';
-
-  openModal({
-    title: '관리자 전환',
-    sub: '관리자 ' + DB.admins.length + '명',
-    body,
-    submitLabel: '전환',
-    onSubmit: (wrap, close) => {
-      const v = $('input[name=adm]:checked', wrap);
-      if (!v) return;
-      DB.currentAdminId = v.value;
-      saveDB();
-      close();
-      render();
-      toast(aName(v.value) + ' 님으로 전환했습니다');
-    }
   });
 }
 
@@ -3248,6 +3766,8 @@ function endShiftNow(w, open){
     s.offAt = now.toISOString();
     s.hours = hoursOf(s);
     s.wage = Math.round(s.hours * num(s.rate || RATE));
+    s.updatedBy = curAdmin().id;
+    s.updatedAt = now.toISOString();
     syncShift(s);
   });
   saveDB();
@@ -3629,6 +4149,8 @@ function syncPay(rec, key, want, me){
     rec[dateKey] = null;
     rec[byKey] = null;
   }
+  rec.updatedBy = me.id;
+  rec.updatedAt = new Date().toISOString();
 }
 
 function submitShift(wrap, close, existing){
@@ -3685,6 +4207,8 @@ function submitShift(wrap, close, existing){
   let rec;
   if (existing){
     rec = existing;
+    rec.updatedBy = me.id;
+    rec.updatedAt = new Date().toISOString();
   } else {
     rec = { id: uid(), createdBy: me.id, createdAt: new Date().toISOString() };
     DB.shifts.push(rec);
@@ -4592,7 +5116,7 @@ function viewLedger(){
     const billed = g.rows.reduce((a, s) => a + billAmount(s), 0);
     const paid = g.rows.filter(s => s.clientPaid).reduce((a, s) => a + billAmount(s), 0);
     const unpaid = g.rows.filter(s => !s.clientPaid);
-    return { key: k, id: g.id, name: g.name, billed: billed, paid: paid, due: billed - paid, unpaid: unpaid, n: g.rows.length };
+    return { key: k, id: g.id, name: g.name, billed: billed, paid: paid, due: billed - paid, unpaid: unpaid, n: g.rows.length, rows: g.rows };
   }).sort((a, b) => b.due - a.due || b.billed - a.billed);
 
   const clientHTML = clientRows.length ? clientRows.map(r => {
@@ -4603,6 +5127,7 @@ function viewLedger(){
         ' <span class="badge cnt">' + r.n + '건</span></div>' +
         '<div class="rec-amt">' + won(r.billed) + '<small>청구</small></div></div>' +
       '<div class="rec-meta">입금 ' + won(r.paid) + ' · <b style="color:' + (r.due > 0 ? '#c2410c' : '#15803d') + '">미수금 ' + won(r.due) + '</b></div>' +
+      '<div class="rec-meta" style="margin-top:2px">' + byBadgeOfRows(r.rows) + '</div>' +
       '<div class="row2" style="margin-top:8px;gap:6px">' +
         (r.unpaid.length ? '<button class="mini ok" data-act="ledger-pay-client" data-ids="' + unpaidIds + '">입금 완료</button>' : '<span class="muted" style="font-size:11.5px;align-self:center">입금 완료</span>') +
         (r.unpaid.length ? '<button class="mini" data-act="ledger-bill" data-ids="' + unpaidIds + '">계좌 문자</button>' : '') +
@@ -4626,7 +5151,7 @@ function viewLedger(){
     const paid = g.rows.filter(s => s.workerPaid).reduce((a, s) => a + num(s.wage), 0);
     const unpaid = g.rows.filter(s => !s.workerPaid);
     return { key: k, name: g.name, hours: g.rows.reduce((a, s) => a + hoursOf(s), 0), pay: pay, paid: paid, due: pay - paid, unpaid: unpaid, n: g.rows.length,
-      allow: g.rows.reduce((a, s) => a + allowanceOf(s), 0) };
+      allow: g.rows.reduce((a, s) => a + allowanceOf(s), 0), rows: g.rows };
   }).sort((a, b) => b.due - a.due || b.pay - a.pay);
 
   const workerHTML = workerRows.length ? workerRows.map(r => {
@@ -4637,6 +5162,7 @@ function viewLedger(){
         '<div class="rec-amt">' + won(r.pay) + '<small>일당 ' + r.hours + '시간</small></div></div>' +
       '<div class="rec-meta">지급 ' + won(r.paid) + ' · <b style="color:' + (r.due > 0 ? '#c2410c' : '#15803d') + '">미지급 ' + won(r.due) + '</b>' +
         (r.allow ? ' · 수당 ' + won(r.allow) + ' 포함' : '') + '</div>' +
+      '<div class="rec-meta" style="margin-top:2px">' + byBadgeOfRows(r.rows) + '</div>' +
       (r.unpaid.length ? '<div class="row2" style="margin-top:8px;gap:6px">' +
         '<button class="mini ok" data-act="ledger-pay-worker" data-ids="' + unpaidIds + '">지급 완료</button></div>' : '') +
       '</div>';
@@ -4648,7 +5174,8 @@ function viewLedger(){
         ' <span class="badge cnt">' + esc(fmtDate(e.date)) + '</span></div>' +
         '<div class="rec-amt">' + won(e.amount) + '</div></div>' +
       (e.memo ? '<div class="rec-memo">' + esc(e.memo) + '</div>' : '') +
-      '<div class="rec-foot"><span class="rec-by">' + esc(aName(e.createdBy)) + '</span>' +
+      '<div class="rec-foot"><span class="rec-by">' + byBadge(e.createdBy) +
+        (e.updatedBy && e.updatedBy !== e.createdBy ? ' ' + byBadge(e.updatedBy, '수정') : '') + '</span>' +
         '<span class="rec-acts">' +
           '<button class="mini" data-act="edit-expense" data-id="' + e.id + '">수정</button>' +
           '<button class="mini danger" data-act="del-expense" data-id="' + e.id + '">삭제</button>' +
@@ -4710,6 +5237,7 @@ function openExpenseModal(id){
       if (!date){ toast('날짜를 선택해 주세요'); return; }
       if (!(amount > 0)){ toast('금액을 입력해 주세요'); return; }
       const rec = e || { id: uid(), createdAt: new Date().toISOString(), createdBy: curAdmin().id };
+      if (e){ rec.updatedBy = curAdmin().id; rec.updatedAt = new Date().toISOString(); }
       rec.date = date;
       rec.category = $('#exCat', wrap).value;
       rec.amount = Math.round(amount);
@@ -4733,12 +5261,27 @@ function openSettings(){
     return '<div class="tbl-row"><span class="tbl-dot ' + (ok ? 'on' : 'off') + '"></span>' +
       '<b>' + esc(TABLES[k]) + '</b><span class="muted">' +
       (ok ? (info.count == null ? '연결됨' : info.count + '행') : '없음') + '</span></div>';
-  }).join('');
+  }).join('') +
+    '<div class="tbl-row"><span class="tbl-dot ' + ((SYNC.state === 'live' && !adminTableMissing()) ? 'on' : 'off') + '"></span>' +
+      '<b>' + esc(ADMINS_TABLE) + ' (관리자 계정)</b><span class="muted">' +
+      esc(SYNC.state === 'live' ? (adminTableMissing() ? '없음 · 이 기기에만' : '연결됨') : '확인 전') + '</span></div>';
 
+  const me = curAdmin().id;
   const admEdit = DB.admins.map(a =>
-    '<div class="row">' +
-      '<input type="text" data-admname="' + esc(a.id) + '" value="' + esc(a.name) + '" placeholder="관리자 이름">' +
-      '<input type="text" data-admrole="' + esc(a.id) + '" value="' + esc(a.role || '') + '" placeholder="역할">' +
+    '<div class="adm-acct' + (a.id === me ? ' on' : '') + '">' +
+      '<div class="adm-acct-h">' +
+        '<b>' + esc(a.name) + '</b>' +
+        (a.id === me ? '<span class="badge reg">현재 로그인</span>' : '') +
+        (adminHasOwnPass(a) ? '<span class="badge cnt">비밀번호 설정됨</span>' : '<span class="badge wait">기본 비밀번호</span>') +
+      '</div>' +
+      '<div class="row2">' +
+        '<input type="text" data-admname="' + esc(a.id) + '" value="' + esc(a.name) + '" placeholder="관리자 이름" aria-label="관리자 이름">' +
+        '<input type="text" data-admrole="' + esc(a.id) + '" value="' + esc(a.role || '') + '" placeholder="역할" aria-label="역할">' +
+      '</div>' +
+      '<div class="row2">' +
+        '<input type="password" data-admpass="' + esc(a.id) + '" value="" autocomplete="new-password" placeholder="새 비밀번호 (4자리 이상)" aria-label="새 비밀번호">' +
+        '<input type="password" data-admpass2="' + esc(a.id) + '" value="" autocomplete="new-password" placeholder="새 비밀번호 확인" aria-label="새 비밀번호 확인">' +
+      '</div>' +
     '</div>').join('');
 
   const body =
@@ -4750,6 +5293,18 @@ function openSettings(){
     '</div>' +
     '<p class="form-note">기록은 관리자 3명이 같은 DB를 함께 보고, 이 기기에도 사본을 남깁니다.</p>' +
 
+    '<h3 class="sec-h">관리자 이름 · 비밀번호</h3>' +
+    '<div class="adm-edit">' + admEdit + '</div>' +
+    '<button type="button" class="btn ghost wide" data-act="save-admins">계정 저장</button>' +
+    '<p class="form-note">비밀번호는 <b>SHA-256 해시</b>로만 저장하고, 처음 비밀번호는 <b>' + DEFAULT_ADMIN_PASS + '</b>입니다.<br>' +
+      '이름·비밀번호는 <b id="admSyncLine">' + esc(adminDbStateLine()) + '</b>' +
+      (adminTableMissing() ? ' · 아래 SQL을 실행하면 맞춰집니다' : '') + '</p>' +
+    (adminTableMissing()
+      ? '<div class="sql-hint"><b>' + esc(ADMINS_TABLE) + ' 표가 아직 없습니다</b>' +
+        '<p>지금은 이 기기에서만 로그인·비밀번호가 동작합니다. 관리자 3명이 같은 비밀번호를 쓰려면 Supabase SQL Editor에서 스키마를 다시 실행하세요.</p>' +
+        '<button type="button" class="btn ghost" data-act="db-status">SQL 열기 · 복사</button></div>'
+      : '') +
+
     '<h3 class="sec-h">입금 계좌 (계좌 문자에 자동 입력)</h3>' +
     '<div class="row2">' +
       '<input type="text" data-acc="bank" value="' + esc(billingAccount().bank) + '" placeholder="은행 (예: 국민은행)">' +
@@ -4758,11 +5313,6 @@ function openSettings(){
     '<input type="text" data-acc="number" value="' + esc(billingAccount().number) + '" placeholder="계좌번호 (예: 123-45-6789012)" style="margin:0 0 6px">' +
     '<button type="button" class="btn ghost wide" data-act="save-account">계좌 저장</button>' +
     '<p class="form-note">저장하면 근무 기록의 <b>계좌 문자</b>에 자동으로 들어갑니다. 이 기기에 저장됩니다.</p>' +
-
-    '<h3 class="sec-h">관리자 이름</h3>' +
-    '<div class="adm-edit">' + admEdit + '</div>' +
-    '<button type="button" class="btn ghost wide" data-act="save-admins">이름 저장</button>' +
-    '<p class="form-note">공개 페이지라 기본 이름은 <b>관리자 1 (대표) · 관리자 2 (현장) · 관리자 3 (정산)</b>으로 익명 처리돼 있습니다. 이 기기에서만 바뀝니다.</p>' +
 
     '<h3 class="sec-h">현황</h3>' +
     '<dl class="kv">' +
@@ -4782,7 +5332,8 @@ function openSettings(){
     '<div class="row2" style="margin-bottom:10px">' +
       '<button type="button" class="btn ghost" data-act="import-contacts" data-kind="worker">📇 인력 연락처</button>' +
       '<button type="button" class="btn ghost" data-act="import-contacts" data-kind="client">📇 거래처 연락처</button>' +
-    '</div>';
+    '</div>' +
+    '<button type="button" class="btn ghost wide" data-act="logout">로그아웃 (' + esc(curAdmin().name) + ')</button>';
 
   openModal({
     title: '설정',
@@ -5198,8 +5749,12 @@ document.addEventListener('keydown', ev => {
    ============================================================ */
 DB = loadDB();
 if (!DB.currentAdminId || !adminById(DB.currentAdminId)) DB.currentAdminId = (DB.admins[0] || {}).id;
+/* 로그인 세션이 있으면 바로 들어가고, 없으면 로그인 화면부터 (데이터·DB 읽기 전) */
+sessionLoad();
+if (isLoggedIn()) DB.currentAdminId = AUTH.adminId;
+else ui.loginAdmin = DB.currentAdminId;
 render();
-initDb();
+if (isLoggedIn()) initDb();
 
 /* 홈 화면에 추가(설치형 앱) — 캐시 없는 최소 서비스 워커 */
 if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator && location.protocol === 'https:'){
