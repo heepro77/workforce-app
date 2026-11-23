@@ -1980,10 +1980,12 @@ function viewHome(){
       const rows = todays.filter(s => s.workerId === w.id).sort((a, b) => timeMin(a.start) - timeMin(b.start));
       const on = rows.length > 0;
       const sub = on
-        ? rows.map(s => (s.start || '-') + '~' + endLabel(s) + ' · ' + (s.place || '-') + ' · ' + hoursLabel(s)).join(' / ')
+        ? rows.map(s => (s.start || '-') + '~' + endLabel(s) + ' · ' + (s.place || '-') + ' · ' + hoursLabel(s)).join(' / ') +
+          ' · 일당 ' + won(rows.reduce((a, s) => a + num(s.wage), 0))
         : (w.status === RESERVE ? '예비 인력 · 오늘 미출역' : '오늘 미출역');
       return '<div class="roster-row' + (on ? ' on' : '') + '">' +
         '<div class="roster-id"><b>' + esc(w.name) + '</b><span class="roster-sub">' + esc(sub) + '</span></div>' +
+        (on ? '<button class="mini" data-act="billing-sms" data-id="' + rows.map(x => x.id).join(',') + '">계좌 문자</button>' : '') +
         (on ? '<button class="mini" data-act="today-edit" data-id="' + rows[0].id + '">시간 수정</button>' : '') +
         '<button class="switch' + (on ? ' on' : '') + '" data-act="today-toggle" data-worker="' + w.id + '" aria-pressed="' + (on ? 'true' : 'false') + '" aria-label="' + esc(w.name) + ' 오늘 출역 ' + (on ? 'ON' : 'OFF') + '">' + (on ? 'ON' : 'OFF') + '</button>' +
       '</div>';
@@ -2096,6 +2098,7 @@ function recHTML(s){
     '<div class="rec-foot">' +
       '<span class="rec-by">등록 ' + esc(aName(s.createdBy)) + '</span>' +
       '<span class="rec-acts">' +
+        '<button class="mini" data-act="billing-sms" data-id="' + s.id + '">계좌 문자</button>' +
         '<button class="mini" data-act="edit-shift" data-id="' + s.id + '">수정</button>' +
         '<button class="mini danger" data-act="del-shift" data-id="' + s.id + '">삭제</button>' +
       '</span>' +
@@ -2970,6 +2973,202 @@ function openQuickShift(opts){
   paintCalc();
 }
 
+/* ============================================================
+   계좌 문자 보내기 — 근무·청구 금액·입금 계좌를 거래처에 문자로
+   ============================================================ */
+const ACCOUNT_KEY = 'wfp_account';
+
+function billingAccount(){
+  try {
+    const raw = localStorage.getItem(ACCOUNT_KEY);
+    if (raw){
+      const o = JSON.parse(raw) || {};
+      return { bank: String(o.bank || ''), number: String(o.number || ''), holder: String(o.holder || '') };
+    }
+  } catch(e){}
+  return { bank: '', number: '', holder: '' };
+}
+function saveBillingAccount(o){
+  const v = {
+    bank: normClientName(o && o.bank),
+    number: normClientName(o && o.number),
+    holder: normClientName(o && o.holder)
+  };
+  try { localStorage.setItem(ACCOUNT_KEY, JSON.stringify(v)); } catch(e){}
+  return v;
+}
+function accountLine(acc){
+  const a = acc || billingAccount();
+  if (!a.number) return '계좌 미등록 (아래에서 입력해 저장하세요)';
+  return [a.bank, a.number, a.holder ? '(' + a.holder + ')' : ''].filter(Boolean).join(' ');
+}
+function billingShifts(ids){
+  return String(ids || '').split(',').map(x => x.trim()).filter(Boolean)
+    .map(x => DB.shifts.find(s => s.id === x)).filter(Boolean);
+}
+function billingMessageText(list, acc){
+  const rows = Array.isArray(list) ? list : [list];
+  if (!rows.length) return '';
+  const s0 = rows[0];
+  const client = clientById(s0.clientId) || clientByName(s0.place);
+  const place = client ? client.name : (s0.place || '');
+  const hours = rows.reduce((a, s) => a + hoursOf(s), 0);
+  const sum = rows.reduce((a, s) => a + num(s.wage), 0);
+  const lines = ['[근무 청구] ' + (place ? place + ' ' : '') + fmtDate(s0.date)];
+  rows.forEach(s => {
+    lines.push('- ' + wName(s) + ' · ' + (s.start || '-') + '~' + endLabel(s) + ' (' + hoursLabel(s) + ')');
+  });
+  lines.push('합계 ' + hours + '시간 · 청구 금액 ' + won(sum));
+  lines.push('입금 계좌: ' + accountLine(acc));
+  return lines.join('\n');
+}
+function smsHref(phone, text){
+  const num = String(phone || '').replace(/[^\d+]/g, '');
+  const isIOS = typeof navigator !== 'undefined' && /iPad|iPhone|iPod/.test(navigator.userAgent || '');
+  return 'sms:' + num + (isIOS ? '&' : '?') + 'body=' + encodeURIComponent(String(text || ''));
+}
+function openDeviceSms(phone, text){
+  const url = smsHref(phone, text);
+  try {
+    const a = document.createElement('a');
+    a.href = url;
+    a.rel = 'noopener';
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { try { a.remove(); } catch(e){} }, 0);
+  } catch(e){
+    try { window.location.href = url; } catch(e2){}
+  }
+  return url;
+}
+function recordBillingSms(list, phone, text){
+  const rows = Array.isArray(list) ? list : [list];
+  if (!rows.length) return null;
+  const s0 = rows[0];
+  const client = clientById(s0.clientId) || clientByName(s0.place);
+  const rec = {
+    id: uid(),
+    at: new Date().toISOString(),
+    managerId: curAdmin().id,
+    mode: 'client',
+    recipients: [client ? client.name : (s0.place || formatPhone(normPhone(phone)) || '거래처')],
+    count: 1,
+    content: String(text || '')
+  };
+  DB.messages.push(rec);
+  rows.forEach(s => { s.billSmsAt = rec.at; syncShift(s); });
+  syncSms(rec);
+  saveDB();
+  return rec;
+}
+function openBillingSms(ids){
+  const list = billingShifts(ids);
+  if (!list.length){ toast('근무 기록을 찾지 못했습니다'); return; }
+  const s0 = list[0];
+  const client = clientById(s0.clientId) || clientByName(s0.place);
+  const acc = billingAccount();
+  const phone0 = client && client.phone ? formatPhone(normPhone(client.phone)) : '';
+
+  const body =
+    '<label class="f"><span>받는 곳</span><input type="text" id="billTo" value="' +
+      esc(client ? client.name + (client.manager ? ' · ' + client.manager : '') : (s0.place || '')) + '" readonly></label>' +
+    '<label class="f"><span>받는 번호</span><input type="tel" id="billPhone" inputmode="tel" value="' + esc(phone0) + '" placeholder="010-0000-0000"></label>' +
+    '<label class="f"><span>보낼 내용 (고쳐서 보내도 됩니다)</span><textarea id="billBody" rows="7">' + esc(billingMessageText(list, acc)) + '</textarea></label>' +
+    '<div class="row2">' +
+      '<button type="button" class="btn ghost" data-bill="copy">문구 복사</button>' +
+      '<button type="button" class="btn ghost" data-bill="log">발송 이력만 기록</button>' +
+    '</div>' +
+    '<h3 class="sec-h">입금 계좌</h3>' +
+    '<div class="row2">' +
+      '<label class="f"><span>은행</span><input type="text" id="billBank" value="' + esc(acc.bank) + '" placeholder="예: 국민은행"></label>' +
+      '<label class="f"><span>예금주</span><input type="text" id="billHolder" value="' + esc(acc.holder) + '" placeholder="예: 김동희"></label>' +
+    '</div>' +
+    '<label class="f"><span>계좌번호</span><input type="text" id="billNumber" value="' + esc(acc.number) + '" placeholder="예: 123-45-6789012"></label>' +
+    '<button type="button" class="btn ghost wide" data-bill="save-acc" style="margin-bottom:8px">계좌 저장 (다음부터 자동 입력)</button>' +
+    '<p class="form-note" id="billNote">문자 앱이 열리면 보내기만 누르면 됩니다. 보낸 내용은 문자 탭에 기록됩니다.</p>';
+
+  let logged = false;
+  const m = openModal({
+    title: '계좌 문자 보내기',
+    sub: wName(s0) + ' · ' + fmtDate(s0.date) + ' · ' + won(list.reduce((a, s) => a + num(s.wage), 0)),
+    body,
+    submitLabel: '문자 앱 열기',
+    onSubmit: (wrap, close) => {
+      const phone = $('#billPhone', wrap).value;
+      const text = $('#billBody', wrap).value;
+      saveBillingAccount({ bank: $('#billBank', wrap).value, number: $('#billNumber', wrap).value, holder: $('#billHolder', wrap).value });
+      const digits = normPhone(phone);
+      if (!digits){ toast('받는 번호를 입력해 주세요'); return; }
+      if (!String(text).trim()){ toast('보낼 내용을 입력해 주세요'); return; }
+      if (!logged){ recordBillingSms(list, digits, text); logged = true; }
+      openDeviceSms(digits, text);
+      close();
+      render();
+      toast('문자 앱을 열었습니다 · 발송 이력에 기록했습니다');
+    }
+  });
+
+  const wrap = m.wrap;
+  const noteEl = $('#billNote', wrap);
+  wrap.addEventListener('click', ev => {
+    const b = ev.target.closest('[data-bill]');
+    if (!b) return;
+    const what = b.dataset.bill;
+    if (what === 'save-acc'){
+      const acc2 = saveBillingAccount({ bank: $('#billBank', wrap).value, number: $('#billNumber', wrap).value, holder: $('#billHolder', wrap).value });
+      const ta = $('#billBody', wrap);
+      if (ta){
+        const lines = ta.value.split('\n');
+        const i = lines.findIndex(l => l.indexOf('입금 계좌') === 0);
+        const line = '입금 계좌: ' + accountLine(acc2);
+        if (i >= 0) lines[i] = line; else lines.push(line);
+        ta.value = lines.join('\n');
+      }
+      if (noteEl) noteEl.textContent = '계좌를 저장했습니다 · 다음부터 자동으로 들어갑니다';
+      toast('입금 계좌를 저장했습니다');
+      return;
+    }
+    if (what === 'copy'){
+      const text = $('#billBody', wrap).value;
+      copyText(text);
+      if (noteEl) noteEl.textContent = '문구를 복사했습니다 · 문자 앱에 붙여넣으세요';
+      toast('문구를 복사했습니다');
+      return;
+    }
+    if (what === 'log'){
+      const text = $('#billBody', wrap).value;
+      if (!String(text).trim()){ toast('보낼 내용을 입력해 주세요'); return; }
+      recordBillingSms(list, $('#billPhone', wrap).value, text);
+      logged = true;
+      if (noteEl) noteEl.textContent = '발송 이력에 기록했습니다 (문자 앱은 열지 않았습니다)';
+      toast('발송 이력에 기록했습니다');
+      render();
+    }
+  });
+}
+
+function copyText(text){
+  const t = String(text == null ? '' : text);
+  try {
+    if (navigator && navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(t).catch(() => {});
+      return true;
+    }
+  } catch(e){}
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = t;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+    return true;
+  } catch(e){ return false; }
+}
+
 function hasCheck(wrap, id){
   const el = $('#' + id, wrap);
   return !!(el && el.checked);
@@ -3709,9 +3908,10 @@ function openContactPreview(list, kind){
       targets.map(t => '<label class="' + (t.v === def ? 'on' : '') + '">' +
         '<input type="radio" name="impTarget" value="' + t.v + '"' + (t.v === def ? ' checked' : '') + '>' + t.label + '</label>').join('') +
     '</div>' +
+    '<label class="f" style="margin-bottom:8px"><input type="search" id="fImpSearch" placeholder="이름 · 번호로 찾기" style="width:100%"></label>' +
     '<div class="imp-tools">' +
       '<div class="muted" id="fImpSel"></div>' +
-      '<button type="button" class="mini" data-imp="all">전체 선택</button>' +
+      '<button type="button" class="mini" data-imp="all">보이는 항목 전체 선택</button>' +
       '<button type="button" class="mini" data-imp="none">전체 해제</button>' +
     '</div>' +
     '<div class="imp-list" id="fImpList">' + rows.map(itemHTML).join('') + '</div>' +
@@ -3740,11 +3940,24 @@ function openContactPreview(list, kind){
   const wrap = m.wrap;
   const submitBtn = $('[data-submit]', wrap);
   const selEl = $('#fImpSel', wrap);
+  const searchEl = $('#fImpSearch', wrap);
+  const itemEls = () => $$('.imp-item', wrap);
+  const visibleItems = () => itemEls().filter(it => it.style.display !== 'none');
   const refreshSel = () => {
     const n = $$('.imp-cb', wrap).filter(cb => cb.checked).length;
-    if (selEl) selEl.textContent = '선택 ' + n + '개';
+    const v = visibleItems().length;
+    if (selEl) selEl.textContent = '선택 ' + n + '개' + (v !== itemEls().length ? ' · 보이는 ' + v + '개' : '');
     if (submitBtn) submitBtn.textContent = n ? '선택한 ' + n + '개 등록' : '선택 등록';
   };
+  const applyFilter = () => {
+    const q = String(searchEl && searchEl.value || '').trim().toLowerCase();
+    itemEls().forEach(it => {
+      const hit = !q || String(it.textContent || '').toLowerCase().indexOf(q) >= 0;
+      it.style.display = hit ? '' : 'none';
+    });
+    refreshSel();
+  };
+  if (searchEl) searchEl.addEventListener('input', applyFilter);
   wrap.addEventListener('change', ev => {
     const t = ev.target;
     if (t && t.classList && t.classList.contains('imp-cb')){
@@ -3763,12 +3976,14 @@ function openContactPreview(list, kind){
     const b = ev.target.closest('[data-imp]');
     if (!b) return;
     const all = b.dataset.imp === 'all';
-    $$('.imp-cb', wrap).forEach(cb => {
+    const scope = all ? visibleItems() : itemEls();
+    scope.forEach(item => {
+      const cb = $('.imp-cb', item);
+      if (!cb) return;
       const r = rows[Number(cb.dataset.i)];
       if (all && r && r.dup === 'saved') return;
       cb.checked = all;
-      const item = cb.closest('.imp-item');
-      if (item) item.classList.toggle('off', !cb.checked);
+      item.classList.toggle('off', !cb.checked);
     });
     refreshSel();
   });
@@ -3875,6 +4090,15 @@ function openSettings(){
     '</div>' +
     '<button type="button" class="btn ghost wide" data-act="seed-to-db" style="margin:6px 0 2px">샘플 데이터 DB에 올리기</button>' +
     '<p class="form-note">DB 테이블이 비어 있을 때 한 번 누르면 샘플 데이터가 올라갑니다(이미 있는 항목은 건너뜁니다).</p>' +
+
+    '<h3 class="sec-h">입금 계좌 (계좌 문자에 자동 입력)</h3>' +
+    '<div class="row2">' +
+      '<input type="text" data-acc="bank" value="' + esc(billingAccount().bank) + '" placeholder="은행 (예: 국민은행)">' +
+      '<input type="text" data-acc="holder" value="' + esc(billingAccount().holder) + '" placeholder="예금주">' +
+    '</div>' +
+    '<input type="text" data-acc="number" value="' + esc(billingAccount().number) + '" placeholder="계좌번호 (예: 123-45-6789012)" style="margin:0 0 6px">' +
+    '<button type="button" class="btn ghost wide" data-act="save-account">계좌 저장</button>' +
+    '<p class="form-note">저장하면 근무 기록의 <b>계좌 문자</b>에 자동으로 들어갑니다. 이 기기에 저장됩니다.</p>' +
 
     '<h3 class="sec-h">관리자 이름</h3>' +
     '<div class="adm-edit">' + admEdit + '</div>' +
@@ -4042,6 +4266,20 @@ document.addEventListener('click', ev => {
     case 'today-toggle':
       toggleTodayShift(el.dataset.worker);
       break;
+
+    case 'billing-sms':
+      openBillingSms(el.dataset.id || el.dataset.ids);
+      break;
+
+    case 'save-account': {
+      const acc = saveBillingAccount({
+        bank: ($('[data-acc=bank]') || {}).value,
+        number: ($('[data-acc=number]') || {}).value,
+        holder: ($('[data-acc=holder]') || {}).value
+      });
+      toast(acc.number ? '입금 계좌를 저장했습니다 (' + acc.bank + ' ' + acc.number + ')' : '입금 계좌를 저장했습니다');
+      break;
+    }
 
     case 'del-shift': {
       const s = DB.shifts.find(x => x.id === id);
