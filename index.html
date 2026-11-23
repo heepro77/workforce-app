@@ -848,6 +848,8 @@ function hoursOf(s){
 const hoursLabel = s => hoursOf(s) + '시간';
 /* 근무시간 외 수당(원) · 일당 = 근무시간 × 시급 + 수당 */
 const allowanceOf = s => Math.max(0, Math.round(num(s && s.allowance)));
+/* 거래처 청구 문자에 쓰는 기본 근무 금액 = 일당 − 추가 수당 (시간 × 시급) */
+const basePayOf = s => Math.max(0, Math.round(num(s && s.wage) - allowanceOf(s)));
 function endLabel(s){
   if (!s) return '';
   if (!s.end) return '진행중';
@@ -3438,20 +3440,20 @@ function billingShifts(ids){
   return String(ids || '').split(',').map(x => x.trim()).filter(Boolean)
     .map(x => DB.shifts.find(s => s.id === x)).filter(Boolean);
 }
-/* 근무 청구 문자: 날짜 · 인력별 시간/금액 · 합계 · 입금 계좌만 간결하게 (거래처명 제외) */
+/* 근무 청구 문자: 날짜 · 인력별 시간/기본 금액 · 합계 · 입금 계좌만 간결하게
+   (거래처명 제외 · 추가 수당 제외: 문자에는 시간 × 시급인 기본 근무 금액만 적는다) */
 function billingMessageText(list, acc){
   const rows = Array.isArray(list) ? list : [list];
   if (!rows.length) return '';
   const s0 = rows[0];
   const dateISO = s0.date || todayISO();
   const hours = rows.reduce((a, s) => a + hoursOf(s), 0);
-  const sum = rows.reduce((a, s) => a + num(s.wage), 0);
-  const allowSum = rows.reduce((a, s) => a + allowanceOf(s), 0);
+  const sum = rows.reduce((a, s) => a + basePayOf(s), 0);
   const lines = [dateISO];
   rows.forEach(s => {
-    lines.push(wName(s) + ' ' + hoursLabel(s) + (allowanceOf(s) ? ' + 수당 ' + won(allowanceOf(s)) : '') + ' · ' + won(num(s.wage)));
+    lines.push(wName(s) + ' ' + hoursLabel(s) + ' · ' + won(basePayOf(s)));
   });
-  if (rows.length > 1) lines.push('합계 ' + hours + '시간' + (allowSum ? ' + 수당 ' + won(allowSum) : '') + ' · ' + won(sum));
+  if (rows.length > 1) lines.push('합계 ' + hours + '시간 · ' + won(sum));
   lines.push('입금 계좌: ' + accountLine(acc));
   return lines.join('\n');
 }
@@ -3524,7 +3526,7 @@ function openBillingSms(ids){
   let logged = false;
   const m = openModal({
     title: '계좌 문자 보내기',
-    sub: wName(s0) + ' · ' + fmtDate(s0.date) + ' · ' + won(list.reduce((a, s) => a + num(s.wage), 0)),
+    sub: wName(s0) + ' · ' + fmtDate(s0.date) + ' · ' + won(list.reduce((a, s) => a + basePayOf(s), 0)),
     body,
     submitLabel: '문자 앱 열기',
     onSubmit: (wrap, close) => {
