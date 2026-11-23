@@ -1169,6 +1169,8 @@ const TABLE_LIST = ['workers', 'clients', 'logs', 'sms', 'chat', 'expenses'];
 const TABLE_LABEL = { workers: 'wf_workers (인력)', clients: 'wf_clients (거래처)', logs: 'wf_logs (근무·입금)', sms: 'wf_sms (문자)', chat: 'wf_messages (메신저)', expenses: 'wf_expenses (지출)' };
 const CORE_TABLES = ['workers', 'clients', 'logs', 'sms', 'chat'];   /* 지출 표가 없어도 실시간 연결은 유지 */
 const CHAT_TAGS = ['', '현장', '근무', '정산', '공지'];
+const COL_LABEL = { allowance: '수당', allowance_memo: '수당 사유' };
+const warnedCols = {};
 const SEEN_PREFIX = 'wfs_chat_seen_';
 const ADMIN_DEFAULTS = [
   { id: 'a1', name: '관리자 1', role: '대표' },
@@ -1448,6 +1450,10 @@ function dbUpsert(kind, row){
         if (r && r.error){
           const col = missingColumnOf(r.error);
           if (col && left > 0 && payload && !Array.isArray(payload) && Object.prototype.hasOwnProperty.call(payload, col)){
+            if (COL_LABEL[col] && !warnedCols[col]){
+              warnedCols[col] = 1;
+              toast('DB에 ' + COL_LABEL[col] + ' 칸이 없어 이 기기에만 저장했습니다 · Supabase SQL Editor에서 스키마를 다시 실행해 주세요');
+            }
             const next = Object.assign({}, payload);
             delete next[col];
             return send(next, left - 1);
