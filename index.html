@@ -418,7 +418,12 @@
     font-size:11.5px;color:var(--amber);font-weight:700;background:var(--amber-soft);
     border:1px solid #f2e0b0;border-radius:9px;padding:7px 9px;margin-top:8px;line-height:1.5;
   }
-  .chat-list{display:flex;flex-direction:column;gap:7px}
+  .chat-list{
+    display:flex;flex-direction:column;gap:7px;
+    max-height:calc(100dvh - 300px);min-height:180px;overflow-y:auto;
+    padding:2px 2px 6px;-webkit-overflow-scrolling:touch;
+  }
+  .chat-list::-webkit-scrollbar{width:0}
   .chat-day{text-align:center;font-size:11px;font-weight:800;color:#8b95a1;margin:10px 0 2px}
   .chat-row{display:flex;flex-direction:column;gap:3px;max-width:84%;align-self:flex-start}
   .chat-row.me{align-self:flex-end;align-items:flex-end}
@@ -431,7 +436,7 @@
   .chat-row.me .bub{background:var(--brand);border-color:transparent;color:#fff;border-radius:14px 14px 5px 14px}
   .bub-meta{font-size:10px;font-weight:700;color:#a3acb8;padding:0 4px;display:flex;gap:5px;align-items:center}
   .tag-pill{font-size:9.5px;font-weight:800;background:#eef1f5;color:#4b5563;border-radius:999px;padding:2px 6px}
-  .chat-spacer{height:110px}
+  .chat-spacer{height:12px}
   body.chatting{padding-bottom:calc(190px + env(safe-area-inset-bottom))}
   .chatbar{
     position:fixed;left:0;right:0;bottom:calc(62px + env(safe-area-inset-bottom));z-index:26;
@@ -1704,8 +1709,8 @@ function renderChatArea(){
 }
 function scrollChatBottom(){
   const el = $('#chatList');
-  if (el) el.scrollTop = el.scrollHeight;
-  try { window.scrollTo({ top: document.body.scrollHeight, behavior: 'auto' }); } catch(e){}
+  if (!el) return;
+  el.scrollTop = el.scrollHeight;
 }
 function sendChat(){
   const input = $('#chatInput');
