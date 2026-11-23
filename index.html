@@ -68,6 +68,39 @@
   .hero-num small{font-size:15px;font-weight:700;margin-left:4px;opacity:.85}
   .hero-list{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;position:relative}
   .pill{background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.22);border-radius:999px;padding:4px 10px;font-size:11.5px;font-weight:600}
+  button.pill{cursor:pointer;color:#fff;font-family:inherit;line-height:1.5}
+  button.pill:active{transform:scale(.97)}
+  .pill.add{background:transparent;border-style:dashed;opacity:.9}
+  .hero-acts{display:flex;gap:8px;margin-top:12px;position:relative}
+  .hero-btn{
+    flex:1;display:flex;align-items:center;justify-content:center;gap:6px;
+    background:#fff;color:#1c43c9;border:0;border-radius:12px;padding:11px 12px;
+    font-size:13.5px;font-weight:800;font-family:inherit;cursor:pointer;
+    box-shadow:0 4px 12px rgba(9,23,66,.18)
+  }
+  .hero-btn:active{transform:scale(.98)}
+  .hero-btn.ghost{background:rgba(255,255,255,.16);color:#fff;box-shadow:none;border:1px solid rgba(255,255,255,.28);flex:0 0 auto;padding:11px 14px}
+  .hero-cap{font-size:11.5px;font-weight:700;opacity:.85;margin-top:12px;position:relative}
+
+  /* ---------- 오늘 출역 체크 ---------- */
+  .roster{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
+  .roster-row{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line)}
+  .roster-row:last-child{border-bottom:0}
+  .roster-row.on{background:rgba(22,163,74,.07)}
+  .roster-id{flex:1;min-width:0}
+  .roster-id b{font-size:14px;display:block}
+  .roster-sub{display:block;font-size:11.5px;color:var(--muted);font-weight:600;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .roster-row.on .roster-sub{color:#15803d}
+  .switch{
+    display:inline-flex;align-items:center;justify-content:center;min-width:60px;padding:8px 12px;
+    border-radius:999px;border:1px solid #cbd5e1;background:#e2e8f0;color:#475569;
+    font-size:11.5px;font-weight:800;font-family:inherit;cursor:pointer;letter-spacing:.4px
+  }
+  .switch:before{content:"";width:7px;height:7px;border-radius:50%;background:#94a3b8;margin-right:5px}
+  .switch.on{background:#16a34a;border-color:#15803d;color:#fff;box-shadow:0 3px 10px rgba(22,163,74,.35)}
+  .switch.on:before{background:#fff}
+  .switch:active{transform:scale(.96)}
+  .roster-empty{padding:16px;font-size:12.5px;color:var(--muted)}
 
   /* ---------- stats ---------- */
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
@@ -669,6 +702,14 @@ function isoOf(d){
   return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
 }
 function todayISO(){ return isoOf(new Date()); }
+/* '오늘 출역' 기준일: 낮 12시에 새 출역으로 리셋된다. 그 전(00:00~11:59)은 전날 출역이 이어진다. */
+const DISPATCH_RESET_HOUR = 12;
+function dispatchDateKey(when){
+  const base = when ? new Date(when) : new Date();
+  const d = new Date(base.getTime());
+  if (d.getHours() < DISPATCH_RESET_HOUR) d.setDate(d.getDate() - 1);
+  return isoOf(d);
+}
 function parseISO(s){ const [y, m, d] = String(s).split('-').map(Number); return new Date(y, m - 1, d); }
 function fmtDate(s){
   if (!s) return '-';
@@ -1900,6 +1941,7 @@ function renderTabbar(){
 }
 
 function render(){
+  repairQpInDB(SYNC.state === 'live');
   renderHeader();
   const views = {
     home: viewHome, shifts: viewShifts, workers: viewWorkers,
@@ -1916,7 +1958,7 @@ function render(){
 
 /* ---------------- 홈 ---------------- */
 function viewHome(){
-  const today = todayISO();
+  const today = dispatchDateKey();
   const todays = DB.shifts.filter(s => s.date === today);
   const cDue = DB.shifts.filter(s => !s.clientPaid);
   const wDue = DB.shifts.filter(s => !s.workerPaid);
@@ -1928,8 +1970,28 @@ function viewHome(){
   const msgs = DB.messages.slice().sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 2);
 
   const todayPills = todays.length
-    ? todays.map(s => '<span class="pill">' + esc(wName(s)) + ' · ' + esc(s.place || '-') + ' · ' + hoursLabel(s) + '</span>').join('')
+    ? todays.map(s => '<button class="pill" data-act="today-edit" data-id="' + s.id + '">' + esc(wName(s)) + ' · ' + esc(s.place || '-') + ' · ' + hoursLabel(s) + ' ✎</button>').join('')
     : '<span class="pill">아직 등록된 출역이 없습니다</span>';
+
+  const onN = DB.workers.filter(w => todays.some(s => s.workerId === w.id)).length;
+  const rosterRows = DB.workers.slice()
+    .sort((a, b) => (a.status === RESERVE ? 1 : 0) - (b.status === RESERVE ? 1 : 0))
+    .map(w => {
+      const rows = todays.filter(s => s.workerId === w.id).sort((a, b) => timeMin(a.start) - timeMin(b.start));
+      const on = rows.length > 0;
+      const sub = on
+        ? rows.map(s => (s.start || '-') + '~' + endLabel(s) + ' · ' + (s.place || '-') + ' · ' + hoursLabel(s)).join(' / ')
+        : (w.status === RESERVE ? '예비 인력 · 오늘 미출역' : '오늘 미출역');
+      return '<div class="roster-row' + (on ? ' on' : '') + '">' +
+        '<div class="roster-id"><b>' + esc(w.name) + '</b><span class="roster-sub">' + esc(sub) + '</span></div>' +
+        (on ? '<button class="mini" data-act="today-edit" data-id="' + rows[0].id + '">시간 수정</button>' : '') +
+        '<button class="switch' + (on ? ' on' : '') + '" data-act="today-toggle" data-worker="' + w.id + '" aria-pressed="' + (on ? 'true' : 'false') + '" aria-label="' + esc(w.name) + ' 오늘 출역 ' + (on ? 'ON' : 'OFF') + '">' + (on ? 'ON' : 'OFF') + '</button>' +
+      '</div>';
+    }).join('');
+  const rosterHTML = DB.workers.length
+    ? '<h2 class="sec">오늘 출역 체크 <span class="muted" style="font-size:12px;font-weight:700">' + onN + '/' + DB.workers.length + '명 ON</span></h2>' +
+      '<div class="roster">' + rosterRows + '</div>'
+    : '<div class="card muted" style="font-size:12.5px">등록된 인력이 없습니다. <b>인력</b> 탭에서 먼저 추가하세요.</div>';
 
   const msgBits = msgs.length ? msgs.map(m => {
     const modeLabel = m.mode === 'client' ? '거래처' : '예비 인력';
@@ -1943,9 +2005,15 @@ function viewHome(){
   return '' +
   '<section class="hero">' +
     '<div class="hero-top"><span>오늘 출역</span><span>' + fmtDate(today) + '</span></div>' +
-    '<div class="hero-num">' + todays.length + '<small>명</small></div>' +
+    '<div class="hero-cap">낮 12시에 새 출역으로 리셋 · 기준 ' + esc(today) + '</div>' +
+    '<div class="hero-num">' + onN + '<small>명</small></div>' +
     '<div class="hero-list">' + todayPills + '</div>' +
+    '<div class="hero-acts">' +
+      '<button class="hero-btn" data-act="quick-shift">⏱ 오늘 근무시간 등록</button>' +
+    '</div>' +
   '</section>' +
+
+  rosterHTML +
 
   '<div class="grid2">' +
     '<button class="stat" data-act="tab" data-tab="shifts">' +
@@ -2469,6 +2537,28 @@ function openAdminSheet(){
 }
 
 /* ---------- 거래처 자동완성 ---------- */
+function normClientName(s){ return String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); }
+function clientByName(name){
+  const k = normClientName(name).toLowerCase();
+  if (!k) return null;
+  return DB.clients.find(c => normClientName(c.name).toLowerCase() === k) || null;
+}
+/* 목록에 없는 거래처명을 직접 입력했을 때 거래처로 등록한다(같은 이름이 있으면 그 거래처를 쓴다) */
+function ensureClient(name, memo){
+  const nm = normClientName(name);
+  if (!nm) return null;
+  const found = clientByName(nm);
+  if (found) return { client: found, created: false };
+  const row = {
+    id: uid(), name: nm, manager: '', phone: '', address: '',
+    memo: memo || '', createdAt: new Date().toISOString()
+  };
+  DB.clients.push(row);
+  syncClientRow(row);
+  saveDB();
+  return { client: row, created: true };
+}
+
 function mountClientPicker(wrap, s){
   const input = $('#fClientInput', wrap);
   const list = $('#fAcList', wrap);
@@ -2503,7 +2593,7 @@ function mountClientPicker(wrap, s){
     } else if (selId === '__custom'){
       pickEl.hidden = false;
       pickEl.classList.add('custom');
-      pickEl.textContent = '직접 입력으로 등록합니다';
+      pickEl.textContent = '새 거래처로 등록합니다';
       customWrap.style.display = '';
     } else {
       pickEl.hidden = true;
@@ -2529,7 +2619,7 @@ function mountClientPicker(wrap, s){
     let html = '';
     if (raw && !showAll) {
       html += '<button type="button" class="ac-item custom" data-cid="__custom"><b>직접 입력: "' + esc(raw) + '"</b>' +
-        '<small>목록에 없으면 이 이름으로 장소를 등록합니다</small></button>';
+        '<small>목록에 없으면 이 이름으로 새 거래처를 등록합니다</small></button>';
     }
     html += found.map(c =>
       '<button type="button" class="ac-item" data-cid="' + c.id + '"><b>' + esc(c.name) + '</b>' +
@@ -2742,6 +2832,144 @@ function openShiftModal(id){
   paintDurChips();
 }
 
+/* ============================================================
+   오늘 출역 체크 · 근무시간 바로 등록/수정
+   ============================================================ */
+function toggleTodayShift(workerId){
+  const w = workerById(workerId);
+  if (!w) return;
+  const today = dispatchDateKey();
+  const rows = DB.shifts.filter(s => s.workerId === workerId && s.date === today);
+  if (!rows.length){ openQuickShift({ workerId: workerId }); return; }
+  const what = rows.length === 1
+    ? (rows[0].start || '-') + '~' + endLabel(rows[0]) + ' · ' + (rows[0].place || '-')
+    : '오늘 근무 ' + rows.length + '건';
+  confirmModal('오늘 출역 해제',
+    w.name + ' 님의 ' + what + ' 기록을 삭제합니다. 삭제하면 되돌릴 수 없습니다.', '해제', () => {
+      rows.forEach(s => {
+        DB.shifts = DB.shifts.filter(x => x.id !== s.id);
+        dbDelete('logs', s.id);
+      });
+      saveDB();
+      render();
+      toast(w.name + ' 님 오늘 출역을 해제했습니다');
+    });
+}
+
+/* 오늘 날짜로 인력·시간·거래처만 골라 바로 저장하는 빠른 입력창 (기존 기록이면 시간 수정)
+   근무시간은 1~6시간 단축 버튼이나 숫자 입력으로 정하고, 시작·종료 시간은 자동으로 맞춰진다. */
+function openQuickShift(opts){
+  opts = opts || {};
+  const existing = opts.id ? DB.shifts.find(x => x.id === opts.id) : null;
+  if (!DB.workers.length){
+    toast('먼저 인력을 등록해 주세요');
+    ui.tab = 'workers'; render();
+    return;
+  }
+  const today = dispatchDateKey();
+  const day = existing ? (existing.date || today) : today;
+  const ordered = DB.workers.filter(w => w.status !== RESERVE).concat(DB.workers.filter(w => w.status === RESERVE));
+  const w0 = (existing && workerById(existing.workerId)) || workerById(opts.workerId) || ordered[0] || DB.workers[0];
+  const rate0 = existing && num(existing.rate) > 0 ? num(existing.rate) : (num(w0.rate) > 0 ? num(w0.rate) : RATE);
+  const start0 = (existing && existing.start) || opts.start || '08:00';
+  const dur0 = existing ? Math.round(hoursOf(existing) * 60) : (num(opts.durMin) > 0 ? num(opts.durMin) : 480);
+  const end0 = (existing && existing.end) || minToTime(timeMin(start0) + dur0);
+  const h0 = Math.round((dur0 || 480) / 6) / 10;   /* 분 → 시간 (소수 1자리) */
+
+  const workerOpts = ordered.map(w =>
+    '<option value="' + w.id + '"' + (w.id === w0.id ? ' selected' : '') + '>' +
+      esc(w.name) + ' · ' + esc(w.status) + ' · 시급 ' + won(w.rate || RATE) + '</option>').join('');
+
+  const body =
+    '<p class="form-note" style="font-weight:800;color:#1c43c9">' + esc(fmtDate(day)) + ' 근무를 바로 기록합니다</p>' +
+    '<label class="f"><span>인력</span><select name="workerId" id="fqWorker">' + workerOpts + '</select></label>' +
+    '<div class="dur-chips" role="group" aria-label="근무시간 빠른 선택">' +
+      [1,2,3,4,5,6].map(h => '<button type="button" class="dur-chip" data-min="' + (h * 60) + '" data-hours="' + h + '" aria-label="' + h + '시간">' + h + '시간</button>').join('') +
+    '</div>' +
+    '<label class="f"><span>근무시간 직접 입력 (시간)</span>' +
+      '<input type="number" id="fqHours" inputmode="decimal" min="0.5" max="16" step="0.5" value="' + h0 + '"></label>' +
+    '<p class="form-note" id="fqCalc"></p>' +
+    '<div class="row2">' +
+      '<label class="f"><span>시작 시간</span><input type="time" name="start" id="fqStart" step="1800" value="' + esc(start0) + '"></label>' +
+      '<label class="f"><span>종료 시간</span><input type="time" name="end" id="fqEnd" step="1800" value="' + esc(end0) + '"></label>' +
+    '</div>' +
+    '<label class="f"><span>거래처 (검색 · 목록에 없으면 새로 등록)</span>' +
+      '<div class="ac" id="fAcBox">' +
+        '<input type="text" id="fClientInput" autocomplete="off" placeholder="거래처명 · 담당자 · 주소로 검색" value="">' +
+        '<div class="ac-list" id="fAcList" hidden></div>' +
+      '</div>' +
+    '</label>' +
+    '<div class="ac-pick" id="fClientPicked" hidden></div>' +
+    '<input type="hidden" name="clientId" id="fClient" value="">' +
+    '<label class="f" id="fCustomWrap" style="display:none"><span>장소 직접 입력</span>' +
+      '<input type="text" name="customPlace" value="" placeholder="예: 표선 공사현장"></label>' +
+    '<label class="f"><span>메모</span><input type="text" name="memo" value="' + (existing ? esc(existing.memo || '') : '') + '" placeholder="작업 내용 (선택)"></label>' +
+    '<input type="hidden" name="date" value="' + esc(day) + '">' +
+    '<input type="hidden" name="rate" id="fqRate" value="' + rate0 + '">' +
+    '<input type="hidden" name="wage" id="fqWage" value="">' +
+    (existing && existing.clientPaid ? '<input type="checkbox" id="fClientPaid" checked hidden>' : '') +
+    (existing && existing.workerPaid ? '<input type="checkbox" id="fWorkerPaid" checked hidden>' : '');
+
+  const m = openModal({
+    title: existing ? '오늘 근무시간 수정' : '오늘 근무시간 등록',
+    sub: fmtDate(day) + ' · 시간만 골라도 일당이 계산됩니다',
+    body,
+    submitLabel: existing ? '수정 저장' : '등록',
+    onSubmit: (wrap, close) => submitShift(wrap, close, existing)
+  });
+
+  const wrap = m.wrap;
+  const sEl = $('#fqStart', wrap), eEl = $('#fqEnd', wrap), hEl = $('#fqHours', wrap);
+  const rEl = $('#fqRate', wrap), gEl = $('#fqWage', wrap), cEl = $('#fqCalc', wrap);
+  let durMin = dur0 > 0 ? dur0 : 480;
+  const curHours = () => hoursOf({ start: sEl.value, end: eEl.value });
+
+  function paintCalc(){
+    const h = durMin / 60;
+    const rate = num(rEl.value);
+    const pay = Math.round(h * rate);
+    if (gEl) gEl.value = pay;
+    if (cEl) cEl.innerHTML = '일당 <b>' + h + '시간</b> × <b>' + won(rate) + '</b> = <b>' + won(pay) + '</b>';
+    $$('.dur-chip', wrap).forEach(b => b.classList.toggle('on', Number(b.dataset.min) === Math.round(durMin)));
+  }
+  function setEnd(){ eEl.value = minToTime(timeMin(sEl.value || '08:00') + durMin); }
+  function setHours(h){
+    const v = Math.max(0, Math.min(24, Number(h) || 0));
+    durMin = Math.round(v * 60);
+    setEnd();
+    paintCalc();
+  }
+  if (hEl){
+    hEl.addEventListener('input', () => setHours(hEl.value));
+    hEl.addEventListener('change', () => { setHours(hEl.value); hEl.value = Math.round(durMin / 6) / 10; });
+  }
+  $$('.dur-chip', wrap).forEach(b => b.addEventListener('click', () => {
+    durMin = Number(b.dataset.min);
+    if (hEl) hEl.value = Number(b.dataset.hours) || (durMin / 60);
+    setEnd();
+    paintCalc();
+  }));
+  sEl.addEventListener('input', () => { setEnd(); paintCalc(); });
+  sEl.addEventListener('change', () => { setEnd(); paintCalc(); });
+  eEl.addEventListener('input', () => {
+    durMin = Math.round(curHours() * 60);
+    if (hEl) hEl.value = Math.round(durMin / 6) / 10;
+    paintCalc();
+  });
+  eEl.addEventListener('change', () => {
+    durMin = Math.round(curHours() * 60);
+    if (hEl) hEl.value = Math.round(durMin / 6) / 10;
+    paintCalc();
+  });
+  const wSel = $('#fqWorker', wrap);
+  if (wSel) wSel.addEventListener('change', () => {
+    const w = workerById(wSel.value);
+    if (w && num(w.rate) > 0 && rEl){ rEl.value = num(w.rate); paintCalc(); }
+  });
+  mountClientPicker(wrap, existing);
+  paintCalc();
+}
+
 function hasCheck(wrap, id){
   const el = $('#' + id, wrap);
   return !!(el && el.checked);
@@ -2782,16 +3010,30 @@ function submitShift(wrap, close, existing){
   if (hours > 16){ toast('16시간을 넘는 근무는 등록할 수 없습니다'); return; }
   if (!(rate > 0)){ toast('시급을 입력해 주세요'); return; }
   if (!(wage > 0)){ toast('급여를 입력해 주세요'); return; }
-  if (!clientId){ toast('거래처를 검색해 선택하거나 직접 입력해 주세요'); return; }
 
-  let place;
-  if (clientId === '__custom'){
-    place = String(g('customPlace')).trim();
-    if (!place){ toast('장소를 입력해 주세요'); return; }
-  } else {
-    const c = clientById(clientId);
+  /* 목록에 없는 거래처명을 직접 입력해도 저장한다.
+     같은 이름의 거래처가 있으면 그 거래처에, 없으면 새 거래처를 만들어 기록에 연결한다. */
+  const typedEl = $('#fClientInput', wrap);
+  const typedName = normClientName(typedEl ? typedEl.value : '');
+  const directName = normClientName(g('customPlace')) || typedName;
+  let cid = clientId;
+  let place = '';
+  let newClientName = '';
+  if (clientId === '__custom' || (!clientId && directName)){
+    if (!directName){ toast('거래처 이름을 입력해 주세요'); return; }
+    const got = ensureClient(directName);
+    if (!got){ toast('거래처 이름을 입력해 주세요'); return; }
+    cid = got.client.id;
+    place = got.client.name;
+    if (got.created) newClientName = got.client.name;
+  } else if (clientId){
+    const c = clientById(clientId) || clientByName(typedName);
     if (!c){ toast('거래처를 다시 선택해 주세요'); return; }
+    cid = c.id;
     place = c.name;
+  } else {
+    toast('거래처를 검색해 선택하거나 이름을 직접 입력해 주세요');
+    return;
   }
 
   const me = curAdmin();
@@ -2804,7 +3046,7 @@ function submitShift(wrap, close, existing){
   }
   rec.workerId = w.id;
   rec.workerName = w.name;
-  rec.clientId = clientId;
+  rec.clientId = cid;
   rec.place = place;
   rec.date = date;
   rec.start = start;
@@ -2821,7 +3063,8 @@ function submitShift(wrap, close, existing){
   syncShift(rec);
   close();
   render();
-  toast(existing ? '근무 기록을 수정했습니다' : w.name + ' 님 근무를 등록했습니다');
+  const done = existing ? '근무 기록을 수정했습니다' : w.name + ' 님 근무를 등록했습니다';
+  toast(newClientName ? done + ' · 새 거래처 "' + newClientName + '" 등록' : done);
 }
 
 /* ---------- 인력 ---------- */
@@ -3025,16 +3268,157 @@ function vcardUnescape(s){
     .replace(/\\\\/g, '\\')
     .trim();
 }
+function vcardClean(s){
+  return String(s == null ? '' : s)
+    .replace(/\u0000/g, '')
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/ {2,}/g, ' ')
+    .trim();
+}
+function vcardText(s){ return vcardUnescape(vcardClean(s)); }
 
-/* vCard(.vcf) */
-function parseVCardText(text){
-  const src = String(text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-  const lines = [];
-  src.split('\n').forEach(line => {
-    if (/^[ \t]/.test(line) && lines.length) lines[lines.length - 1] += line.slice(1);
-    else lines.push(line);
+/* ---------- vCard 2.1 Quoted-Printable 해독 (=ED=99=A9 → 홍) ---------- */
+const QP_RUN = /(?:=[0-9A-Fa-f]{2}){2,}/;
+function looksQuotedPrintable(s){ return QP_RUN.test(String(s == null ? '' : s)); }
+function pushUtf8Bytes(bytes, cp){
+  if (cp < 0x80) bytes.push(cp);
+  else if (cp < 0x800) bytes.push(0xC0 | (cp >> 6), 0x80 | (cp & 0x3F));
+  else if (cp < 0x10000) bytes.push(0xE0 | (cp >> 12), 0x80 | ((cp >> 6) & 0x3F), 0x80 | (cp & 0x3F));
+  else bytes.push(0xF0 | (cp >> 18), 0x80 | ((cp >> 12) & 0x3F), 0x80 | ((cp >> 6) & 0x3F), 0x80 | (cp & 0x3F));
+}
+function bytesToText(bytes, charset){
+  const cs = String(charset || '').toLowerCase();
+  const euc = /euc[-_]?kr|ks[-_]?c[-_]?5601|cp949|windows[-_]?949|uhc/.test(cs);
+  const order = euc ? ['euc-kr', 'windows-949', 'utf-8'] : ['utf-8', 'euc-kr'];
+  if (typeof TextDecoder !== 'undefined'){
+    for (const enc of order){
+      try { return new TextDecoder(enc, { fatal: true }).decode(bytes); } catch(e){}
+    }
+    for (const enc of order){
+      try { return new TextDecoder(enc).decode(bytes); } catch(e){}
+    }
+  }
+  return euc ? eucKrDecode(bytes) : utf8Decode(bytes);
+}
+/* TextDecoder 가 euc-kr 을 다루지 못하는 환경(구형 브라우저·jsdom)에서 쓰는 KS X 1001 한글 표
+   index = (앞바이트-0xB0)*94 + (뒷바이트-0xA1) */
+const EUCKR_HANGUL = (
+  '가각간갇갈갉갊감갑값갓갔강갖갗같갚갛개객갠갤갬갭갯갰갱갸갹갼걀걋걍걔걘걜거걱건걷걸걺검겁것겄겅겆겉겊겋게겐겔겜겝겟겠겡겨격겪견겯결겸겹겻겼경곁계곈곌곕곗고곡곤곧골곪곬곯곰곱곳공곶과곽관괄괆괌괍괏광' +
+  '괘괜괠괩괬괭괴괵괸괼굄굅굇굉교굔굘굡굣구국군굳굴굵굶굻굼굽굿궁궂궈궉권궐궜궝궤궷귀귁귄귈귐귑귓규균귤그극근귿글긁금급긋긍긔기긱긴긷길긺김깁깃깅깆깊까깍깎깐깔깖깜깝깟깠깡깥깨깩깬깰깸깹깻깼깽꺄꺅꺌꺼' +
+  '꺽꺾껀껄껌껍껏껐껑께껙껜껨껫껭껴껸껼꼇꼈꼍꼐꼬꼭꼰꼲꼴꼼꼽꼿꽁꽂꽃꽈꽉꽐꽜꽝꽤꽥꽹꾀꾄꾈꾐꾑꾕꾜꾸꾹꾼꿀꿇꿈꿉꿋꿍꿎꿔꿜꿨꿩꿰꿱꿴꿸뀀뀁뀄뀌뀐뀔뀜뀝뀨끄끅끈끊끌끎끓끔끕끗끙끝끼끽낀낄낌낍낏낑나낙낚' +
+  '난낟날낡낢남납낫났낭낮낯낱낳내낵낸낼냄냅냇냈냉냐냑냔냘냠냥너넉넋넌널넒넓넘넙넛넜넝넣네넥넨넬넴넵넷넸넹녀녁년녈념녑녔녕녘녜녠노녹논놀놂놈놉놋농높놓놔놘놜놨뇌뇐뇔뇜뇝뇟뇨뇩뇬뇰뇹뇻뇽누눅눈눋눌눔눕눗' +
+  '눙눠눴눼뉘뉜뉠뉨뉩뉴뉵뉼늄늅늉느늑는늘늙늚늠늡늣능늦늪늬늰늴니닉닌닐닒님닙닛닝닢다닥닦단닫달닭닮닯닳담답닷닸당닺닻닿대댁댄댈댐댑댓댔댕댜더덕덖던덛덜덞덟덤덥덧덩덫덮데덱덴델뎀뎁뎃뎄뎅뎌뎐뎔뎠뎡뎨뎬' +
+  '도독돈돋돌돎돐돔돕돗동돛돝돠돤돨돼됐되된될됨됩됫됴두둑둔둘둠둡둣둥둬뒀뒈뒝뒤뒨뒬뒵뒷뒹듀듄듈듐듕드득든듣들듦듬듭듯등듸디딕딘딛딜딤딥딧딨딩딪따딱딴딸땀땁땃땄땅땋때땍땐땔땜땝땟땠땡떠떡떤떨떪떫떰떱떳' +
+  '떴떵떻떼떽뗀뗄뗌뗍뗏뗐뗑뗘뗬또똑똔똘똥똬똴뙈뙤뙨뚜뚝뚠뚤뚫뚬뚱뛔뛰뛴뛸뜀뜁뜅뜨뜩뜬뜯뜰뜸뜹뜻띄띈띌띔띕띠띤띨띰띱띳띵라락란랄람랍랏랐랑랒랖랗래랙랜랠램랩랫랬랭랴략랸럇량러럭런럴럼럽럿렀렁렇레렉렌렐' +
+  '렘렙렛렝려력련렬렴렵렷렸령례롄롑롓로록론롤롬롭롯롱롸롼뢍뢨뢰뢴뢸룀룁룃룅료룐룔룝룟룡루룩룬룰룸룹룻룽뤄뤘뤠뤼뤽륀륄륌륏륑류륙륜률륨륩륫륭르륵른를름릅릇릉릊릍릎리릭린릴림립릿링마막만많맏말맑맒맘맙맛' +
+  '망맞맡맣매맥맨맬맴맵맷맸맹맺먀먁먈먕머먹먼멀멂멈멉멋멍멎멓메멕멘멜멤멥멧멨멩며멱면멸몃몄명몇몌모목몫몬몰몲몸몹못몽뫄뫈뫘뫙뫼묀묄묍묏묑묘묜묠묩묫무묵묶문묻물묽묾뭄뭅뭇뭉뭍뭏뭐뭔뭘뭡뭣뭬뮈뮌뮐뮤뮨뮬' +
+  '뮴뮷므믄믈믐믓미믹민믿밀밂밈밉밋밌밍및밑바박밖밗반받발밝밞밟밤밥밧방밭배백밴밸뱀뱁뱃뱄뱅뱉뱌뱍뱐뱝버벅번벋벌벎범법벗벙벚베벡벤벧벨벰벱벳벴벵벼벽변별볍볏볐병볕볘볜보복볶본볼봄봅봇봉봐봔봤봬뵀뵈뵉뵌' +
+  '뵐뵘뵙뵤뵨부북분붇불붉붊붐붑붓붕붙붚붜붤붰붸뷔뷕뷘뷜뷩뷰뷴뷸븀븃븅브븍븐블븜븝븟비빅빈빌빎빔빕빗빙빚빛빠빡빤빨빪빰빱빳빴빵빻빼빽뺀뺄뺌뺍뺏뺐뺑뺘뺙뺨뻐뻑뻔뻗뻘뻠뻣뻤뻥뻬뼁뼈뼉뼘뼙뼛뼜뼝뽀뽁뽄뽈뽐뽑' +
+  '뽕뾔뾰뿅뿌뿍뿐뿔뿜뿟뿡쀼쁑쁘쁜쁠쁨쁩삐삑삔삘삠삡삣삥사삭삯산삳살삵삶삼삽삿샀상샅새색샌샐샘샙샛샜생샤샥샨샬샴샵샷샹섀섄섈섐섕서석섞섟선섣설섦섧섬섭섯섰성섶세섹센셀셈셉셋셌셍셔셕션셜셤셥셧셨셩셰셴셸' +
+  '솅소속솎손솔솖솜솝솟송솥솨솩솬솰솽쇄쇈쇌쇔쇗쇘쇠쇤쇨쇰쇱쇳쇼쇽숀숄숌숍숏숑수숙순숟술숨숩숫숭숯숱숲숴쉈쉐쉑쉔쉘쉠쉥쉬쉭쉰쉴쉼쉽쉿슁슈슉슐슘슛슝스슥슨슬슭슴습슷승시식신싣실싫심십싯싱싶싸싹싻싼쌀쌈쌉' +
+  '쌌쌍쌓쌔쌕쌘쌜쌤쌥쌨쌩썅써썩썬썰썲썸썹썼썽쎄쎈쎌쏀쏘쏙쏜쏟쏠쏢쏨쏩쏭쏴쏵쏸쐈쐐쐤쐬쐰쐴쐼쐽쑈쑤쑥쑨쑬쑴쑵쑹쒀쒔쒜쒸쒼쓩쓰쓱쓴쓸쓺쓿씀씁씌씐씔씜씨씩씬씰씸씹씻씽아악안앉않알앍앎앓암압앗았앙앝앞애액앤' +
+  '앨앰앱앳앴앵야약얀얄얇얌얍얏양얕얗얘얜얠얩어억언얹얻얼얽얾엄업없엇었엉엊엌엎에엑엔엘엠엡엣엥여역엮연열엶엷염엽엾엿였영옅옆옇예옌옐옘옙옛옜오옥온올옭옮옰옳옴옵옷옹옻와왁완왈왐왑왓왔왕왜왝왠왬왯왱외' +
+  '왹왼욀욈욉욋욍요욕욘욜욤욥욧용우욱운울욹욺움웁웃웅워웍원월웜웝웠웡웨웩웬웰웸웹웽위윅윈윌윔윕윗윙유육윤율윰윱윳융윷으윽은을읊음읍읏응읒읓읔읕읖읗의읜읠읨읫이익인일읽읾잃임입잇있잉잊잎자작잔잖잗잘잚' +
+  '잠잡잣잤장잦재잭잰잴잼잽잿쟀쟁쟈쟉쟌쟎쟐쟘쟝쟤쟨쟬저적전절젊점접젓정젖제젝젠젤젬젭젯젱져젼졀졈졉졌졍졔조족존졸졺좀좁좃종좆좇좋좌좍좔좝좟좡좨좼좽죄죈죌죔죕죗죙죠죡죤죵주죽준줄줅줆줌줍줏중줘줬줴쥐쥑' +
+  '쥔쥘쥠쥡쥣쥬쥰쥴쥼즈즉즌즐즘즙즛증지직진짇질짊짐집짓징짖짙짚짜짝짠짢짤짧짬짭짯짰짱째짹짼쨀쨈쨉쨋쨌쨍쨔쨘쨩쩌쩍쩐쩔쩜쩝쩟쩠쩡쩨쩽쪄쪘쪼쪽쫀쫄쫌쫍쫏쫑쫓쫘쫙쫠쫬쫴쬈쬐쬔쬘쬠쬡쭁쭈쭉쭌쭐쭘쭙쭝쭤쭸쭹쮜' +
+  '쮸쯔쯤쯧쯩찌찍찐찔찜찝찡찢찧차착찬찮찰참찹찻찼창찾채책챈챌챔챕챗챘챙챠챤챦챨챰챵처척천철첨첩첫첬청체첵첸첼쳄쳅쳇쳉쳐쳔쳤쳬쳰촁초촉촌촐촘촙촛총촤촨촬촹최쵠쵤쵬쵭쵯쵱쵸춈추축춘출춤춥춧충춰췄췌췐취췬' +
+  '췰췸췹췻췽츄츈츌츔츙츠측츤츨츰츱츳층치칙친칟칠칡침칩칫칭카칵칸칼캄캅캇캉캐캑캔캘캠캡캣캤캥캬캭컁커컥컨컫컬컴컵컷컸컹케켁켄켈켐켑켓켕켜켠켤켬켭켯켰켱켸코콕콘콜콤콥콧콩콰콱콴콸쾀쾅쾌쾡쾨쾰쿄쿠쿡쿤쿨' +
+  '쿰쿱쿳쿵쿼퀀퀄퀑퀘퀭퀴퀵퀸퀼큄큅큇큉큐큔큘큠크큭큰클큼큽킁키킥킨킬킴킵킷킹타탁탄탈탉탐탑탓탔탕태택탠탤탬탭탯탰탱탸턍터턱턴털턺텀텁텃텄텅테텍텐텔템텝텟텡텨텬텼톄톈토톡톤톨톰톱톳통톺톼퇀퇘퇴퇸툇툉툐' +
+  '투툭툰툴툼툽툿퉁퉈퉜퉤튀튁튄튈튐튑튕튜튠튤튬튱트특튼튿틀틂틈틉틋틔틘틜틤틥티틱틴틸팀팁팃팅파팍팎판팔팖팜팝팟팠팡팥패팩팬팰팸팹팻팼팽퍄퍅퍼퍽펀펄펌펍펏펐펑페펙펜펠펨펩펫펭펴편펼폄폅폈평폐폘폡폣포폭' +
+  '폰폴폼폽폿퐁퐈퐝푀푄표푠푤푭푯푸푹푼푿풀풂품풉풋풍풔풩퓌퓐퓔퓜퓟퓨퓬퓰퓸퓻퓽프픈플픔픕픗피픽핀필핌핍핏핑하학한할핥함합핫항해핵핸핼햄햅햇했행햐향허헉헌헐헒험헙헛헝헤헥헨헬헴헵헷헹혀혁현혈혐협혓혔형' +
+  '혜혠혤혭호혹혼홀홅홈홉홋홍홑화확환활홧황홰홱홴횃횅회획횐횔횝횟횡효횬횰횹횻후훅훈훌훑훔훗훙훠훤훨훰훵훼훽휀휄휑휘휙휜휠휨휩휫휭휴휵휸휼흄흇흉흐흑흔흖흗흘흙흠흡흣흥흩희흰흴흼흽힁히힉힌힐힘힙힛힝'
+);
+function eucKrDecode(bytes){
+  let out = '';
+  for (let i = 0; i < bytes.length; i++){
+    const b = bytes[i];
+    if (b < 0x80){ out += String.fromCharCode(b); continue; }
+    if (i + 1 < bytes.length && b >= 0xB0 && b <= 0xC8 && bytes[i + 1] >= 0xA1 && bytes[i + 1] <= 0xFE){
+      out += EUCKR_HANGUL.charAt((b - 0xB0) * 94 + (bytes[i + 1] - 0xA1)) || '?';
+      i++;
+      continue;
+    }
+    if (i + 1 < bytes.length && bytes[i + 1] >= 0xA1 && bytes[i + 1] <= 0xFE){ out += '?'; i++; }
+    else out += '?';
+  }
+  return out;
+}
+function qpDecode(str, charset){
+  const src = String(str == null ? '' : str).replace(/=(?:\r?\n)/g, '');
+  const bytes = [];
+  for (let i = 0; i < src.length; i++){
+    const ch = src.charAt(i);
+    if (ch === '=' && /^[0-9A-Fa-f]{2}$/.test(src.substr(i + 1, 2))){
+      bytes.push(parseInt(src.substr(i + 1, 2), 16));
+      i += 2;
+      continue;
+    }
+    const code = src.charCodeAt(i);
+    if (code < 0x80){
+      if (code !== 13 && code !== 10) bytes.push(code);
+      continue;
+    }
+    let cp = code;
+    if (code >= 0xD800 && code <= 0xDBFF && i + 1 < src.length){
+      const lo = src.charCodeAt(i + 1);
+      if (lo >= 0xDC00 && lo <= 0xDFFF){ cp = 0x10000 + ((code - 0xD800) << 10) + (lo - 0xDC00); i++; }
+    }
+    pushUtf8Bytes(bytes, cp);
+  }
+  return bytesToText(new Uint8Array(bytes), charset);
+}
+/* =XX 가 남아 있으면 풀어본다 — 이미 깨진 채로 저장된 이름 복구에도 쓴다 */
+function decodeQpText(s, charset){
+  let cur = String(s == null ? '' : s);
+  for (let i = 0; i < 4 && looksQuotedPrintable(cur); i++){
+    const dec = qpDecode(cur, charset);
+    if (!dec || dec === cur) break;
+    cur = dec;
+  }
+  return cur;
+}
+
+/* ---------- 줄 접기(\r?\n[ \t]) · QP 소프트 줄바꿈(=\r?\n) 병합 ---------- */
+function vcardUnfold(src){
+  const rawLines = String(src == null ? '' : src).replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  const out = [];
+  rawLines.forEach(raw => {
+    if (/^[ \t]/.test(raw) && out.length){
+      const prev = out[out.length - 1];
+      out[out.length - 1] = (/=$/.test(prev) ? prev.slice(0, -1) : prev) + raw.slice(1);
+      return;
+    }
+    const line = raw.replace(/\s+$/, '');
+    if (!line) return;
+    if (out.length && /=$/.test(out[out.length - 1]) && !/^BEGIN:VCARD/i.test(line)){
+      const prev = out[out.length - 1];
+      const qpish = /QUOTED-PRINTABLE|=[0-9A-Fa-f]{2}/i.test(prev) || /[^\x00-\x7F]/.test(prev);
+      if (qpish){ out[out.length - 1] = prev.slice(0, -1) + line; return; }
+    }
+    out.push(line);
   });
+  return out;
+}
+function vcardSplitEscaped(s, sep){
+  const str = String(s == null ? '' : s);
+  const out = [];
+  let cur = '';
+  for (let i = 0; i < str.length; i++){
+    const ch = str.charAt(i);
+    if (ch === '\\' && i + 1 < str.length){ cur += ch + str.charAt(i + 1); i++; continue; }
+    if (ch === sep){ out.push(cur); cur = ''; continue; }
+    cur += ch;
+  }
+  out.push(cur);
+  return out;
+}
+function vcardCharset(head){
+  const m = String(head || '').match(/CHARSET\s*=\s*"?([A-Za-z0-9_.:\-]+)"?/i);
+  return m ? m[1] : '';
+}
 
+/* vCard(.vcf) — 2.1(QUOTED-PRINTABLE) · 3.0 · 4.0 */
+function parseVCardText(text){
   const out = [];
   let cur = null;
   const flush = () => {
@@ -3042,39 +3426,49 @@ function parseVCardText(text){
     const tels = cur.tel.slice().sort((a, b) => b.cell - a.cell);
     const phones = [];
     tels.forEach(t => { const n = normPhone(t.value); if (n && phones.indexOf(n) < 0) phones.push(n); });
-    let name = vcardUnescape(cur.fn || '');
-    if (!name && (cur.last || cur.first)){
-      const l = vcardUnescape(cur.last || ''), f = vcardUnescape(cur.first || '');
-      name = /[\uAC00-\uD7A3]/.test(l + f) ? (l + f) : [f, l].filter(Boolean).join(' ');
+
+    const nParts = vcardSplitEscaped(cur.n || '', ';').map(vcardText);
+    const nLast = nParts[0] || '', nFirst = nParts[1] || '';
+    const nRest = nParts.slice(2).filter(Boolean);
+
+    let name = vcardText(cur.fn || '');
+    if (!name && (nLast || nFirst)){
+      name = /[\uAC00-\uD7A3]/.test(nLast + nFirst) ? (nLast + nFirst) : [nFirst, nLast].filter(Boolean).join(' ');
     }
-    if (!name) name = vcardUnescape(cur.org || '');
-    const memo = [vcardUnescape(cur.note || ''), vcardUnescape(cur.adr || '')].filter(Boolean).join(' · ');
+    if (!name && nRest.length) name = nRest[0];
+    const org = vcardSplitEscaped(cur.org || '', ';').filter(Boolean).map(vcardText).join(' ');
+    if (!name) name = org;
+    const adr = vcardSplitEscaped(cur.adr || '', ';').filter(Boolean).map(vcardText).join(' ');
+    const memo = [vcardText(cur.note || ''), adr].filter(Boolean).join(' · ');
     if (name || phones.length){
       out.push({ name: name.trim(), phone: phones.length ? formatPhone(phones[0]) : '',
-        phones: phones, org: vcardUnescape(cur.org || ''), memo: memo, source: 'VCF' });
+        phones: phones, org: org, memo: memo, source: 'VCF' });
     }
     cur = null;
   };
 
-  for (const raw of lines){
-    const line = raw.trim();
-    if (!line) continue;
+  for (const line of vcardUnfold(text)){
     if (/^BEGIN:VCARD/i.test(line)){ flush(); cur = { tel: [] }; continue; }
     if (/^END:VCARD/i.test(line)){ flush(); continue; }
     if (!cur) continue;
     const ci = line.indexOf(':');
     if (ci < 0) continue;
     const head = line.slice(0, ci);
-    const value = line.slice(ci + 1);
+    const headUp = head.toUpperCase();
     const bare = head.split(';')[0] || '';
     const key = String(bare.split('.').pop() || '').toUpperCase();
-    const isCell = /CELL|MOBILE|IPHONE|HANDHELD/i.test(head.toUpperCase());
+    const isQp = /QUOTED-PRINTABLE|ENCODING\s*=\s*QP(?:$|[;:])/i.test(head);
+    const charset = vcardCharset(head);
+    let value = line.slice(ci + 1);
+    if (isQp || /=[0-9A-Fa-f]{2}/.test(value)) value = qpDecode(value, charset);
+    value = value.replace(/\r?\n/g, ' ').replace(/\s+$/, '');
+    const isCell = /CELL|MOBILE|IPHONE|HANDHELD/i.test(headUp);
     if (key === 'FN') cur.fn = value;
-    else if (key === 'N'){ const p = value.split(';'); cur.last = p[0] || ''; cur.first = p[1] || ''; }
+    else if (key === 'N') cur.n = value;
     else if (key === 'TEL') cur.tel.push({ value: value, cell: isCell ? 1 : 0 });
-    else if (key === 'ORG') cur.org = value.split(';').filter(Boolean).join(' ');
+    else if (key === 'ORG') cur.org = value;
     else if (key === 'NOTE') cur.note = value;
-    else if (key === 'ADR') cur.adr = value.split(';').filter(Boolean).join(' ');
+    else if (key === 'ADR') cur.adr = value;
     else if (key === 'EMAIL' && !cur.email) cur.email = value;
   }
   flush();
@@ -3411,6 +3805,50 @@ function registerContacts(picked, tgt){
   return n;
 }
 
+/* ============================================================
+   이미 저장된 깨진 이름 복구 (=ED=99=A9=EB=B3=91 → 홍병기)
+   ============================================================ */
+const QP_BROKEN = /(?:=[0-9A-Fa-f]{2}){2,}/;
+function fixQpText(v){
+  if (typeof v !== 'string' || !QP_BROKEN.test(v)) return v;
+  const dec = decodeQpText(v);
+  if (!dec || dec === v || dec.indexOf('\uFFFD') >= 0 || QP_BROKEN.test(dec)) return v;
+  return dec;
+}
+/* 저장된 인력·거래처·근무·문자 기록의 이름을 한글로 되돌린다.
+   syncBack=true 이고 DB가 연결돼 있으면 고친 값을 DB에도 올린다. */
+function repairQpInDB(syncBack){
+  if (!DB) return 0;
+  let n = 0;
+  const fixObj = (obj, fields) => {
+    let ch = false;
+    fields.forEach(f => {
+      const before = obj[f];
+      const after = fixQpText(before);
+      if (after !== before){ obj[f] = after; ch = true; }
+    });
+    if (ch) n++;
+    return ch;
+  };
+  (DB.workers || []).forEach(w => {
+    if (fixObj(w, ['name', 'memo', 'personality', 'looks', 'account']) && syncBack) syncWorker(w);
+  });
+  (DB.clients || []).forEach(c => {
+    if (fixObj(c, ['name', 'manager', 'address', 'memo']) && syncBack) syncClientRow(c);
+  });
+  (DB.shifts || []).forEach(s => {
+    if (fixObj(s, ['workerName', 'place']) && syncBack) syncShift(s);
+  });
+  (DB.messages || []).forEach(m => {
+    if (!Array.isArray(m.recipients)) return;
+    let ch = false;
+    m.recipients = m.recipients.map(r => { const a = fixQpText(r); if (a !== r) ch = true; return a; });
+    if (ch){ n++; if (syncBack) syncSms(m); }
+  });
+  if (n){ try { saveDB(); } catch(e){} }
+  return n;
+}
+
 /* ---------- 설정 ---------- */
 function openSettings(){
   const counts = SYNC.counts || {};
@@ -3591,6 +4029,18 @@ document.addEventListener('click', ev => {
 
     case 'edit-shift':
       openShiftModal(id);
+      break;
+
+    case 'quick-shift':
+      openQuickShift({ workerId: el.dataset.worker || '' });
+      break;
+
+    case 'today-edit':
+      openQuickShift({ id: id });
+      break;
+
+    case 'today-toggle':
+      toggleTodayShift(el.dataset.worker);
       break;
 
     case 'del-shift': {
