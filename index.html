@@ -2544,7 +2544,7 @@ function renderHeader(){
   $('#hdDate').textContent = d.getFullYear() + '년 ' + (d.getMonth() + 1) + '월 ' + d.getDate() + '일 (' + weekday[d.getDay()] + ')';
   const a = curAdmin();
   $('#adminChip').innerHTML =
-    '<span class="av">' + esc((a.name || '?').slice(0, 1)) + '</span>' +
+    '<span class="av">' + esc(adminInitial(a)) + '</span>' +
     esc(adminLabel(a)) + ' <span style="opacity:.5;font-size:10px">▾</span>';
   const chip = $('#dbChip');
   if (chip){
