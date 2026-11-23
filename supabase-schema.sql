@@ -52,6 +52,10 @@ create table if not exists public.wf_logs (
   created_at timestamptz default now()
 );
 
+-- ON/OFF 를 누른 실제 시각 (이미 만든 표에도 칸을 더한다)
+alter table public.wf_logs add column if not exists on_at text;
+alter table public.wf_logs add column if not exists off_at text;
+
 create table if not exists public.wf_sms (
   id text primary key,
   mode text,

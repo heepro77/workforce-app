@@ -516,6 +516,48 @@
   .adm-edit input:focus{border-color:#b9c7ef;background:#fff;box-shadow:0 0 0 3px rgba(43,92,255,.10)}
   .adm-edit .row>span{font-size:11px;font-weight:800;color:#98a1ad;text-align:right}
   .sec-h{font-size:12.5px;font-weight:800;color:#3b4450;margin:14px 0 7px}
+
+  /* ---------- 오늘 출역: 차수별(1차·2차…) 기록 ---------- */
+  .roster-item{border-bottom:1px solid var(--line)}
+  .roster-item:last-child{border-bottom:0}
+  .roster-item .roster-row{border-bottom:0}
+  .roster-item.on{background:rgba(22,163,74,.07)}
+  .roster-item.on .roster-row{background:transparent}
+  .rs-list{padding:0 12px 10px;display:flex;flex-direction:column;gap:5px}
+  .rs{
+    display:flex;flex-wrap:wrap;align-items:center;gap:5px;
+    background:#f6f8fc;border:1px solid #e6edf8;border-radius:10px;padding:7px 9px;
+  }
+  .rs-n{font-size:10.5px;font-weight:800;color:#1c43c9;background:#e5edfd;border-radius:6px;padding:2px 6px;white-space:nowrap}
+  .rs-t{font-size:12.5px;font-weight:800;white-space:nowrap}
+  .rs-b{display:flex;gap:4px;margin-left:auto;flex-wrap:wrap}
+  .rs-m{flex:1 1 100%;min-width:0;font-size:11.5px;color:var(--muted);font-weight:700}
+  .rs .mini{padding:4px 7px;font-size:10.5px}
+
+  /* ---------- 자주 가는 거래처 추천 칩 ---------- */
+  .freq-wrap{margin:0 0 9px}
+  .freq-title{font-size:11px;font-weight:800;color:#6f7885;margin:0 2px 5px}
+  .freq-chips{display:flex;gap:5px;overflow-x:auto;padding-bottom:2px;scrollbar-width:none}
+  .freq-chips::-webkit-scrollbar{display:none}
+  .freq-chip{
+    flex:0 0 auto;border:1px solid #dbe4f5;background:#f4f7fe;border-radius:999px;
+    padding:6px 11px;font-size:12px;font-weight:800;color:#1c43c9;font-family:inherit;
+  }
+  .freq-chip small{font-weight:700;color:#7f8cb0;margin-left:4px;font-size:10.5px}
+  .freq-chip:active{transform:scale(.97)}
+  .freq-chip.on{background:var(--brand);border-color:var(--brand);color:#fff}
+  .freq-chip.on small{color:#dbe4fb}
+
+  /* ---------- 인력별 거래처 통계 ---------- */
+  .stat-list{display:flex;flex-direction:column;gap:6px}
+  .stat-row{
+    display:grid;grid-template-columns:22px 1fr auto;gap:8px;align-items:center;
+    background:#f7f9fc;border:1px solid #e8eef7;border-radius:10px;padding:8px 10px;
+  }
+  .stat-rank{font-size:11px;font-weight:800;color:#1c43c9;background:#e5edfd;border-radius:6px;text-align:center;padding:2px 0}
+  .stat-name{font-size:13px;font-weight:800;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .stat-num{font-size:12px;font-weight:800;color:var(--brand-deep)}
+  .stat-sub{grid-column:2 / -1;font-size:11px;font-weight:700;color:var(--muted)}
 </style>
 </head>
 <body>
@@ -606,6 +648,10 @@ create table if not exists public.wf_logs (
   created_by text,
   created_at timestamptz default now()
 );
+
+-- ON/OFF 를 누른 실제 시각 (이미 만든 표에도 칸을 더한다)
+alter table public.wf_logs add column if not exists on_at text;
+alter table public.wf_logs add column if not exists off_at text;
 
 create table if not exists public.wf_sms (
   id text primary key,
@@ -759,8 +805,9 @@ function durLabel(m){
   const h = Math.floor(m / 60), mm = m % 60;
   return h + '시간' + (mm ? ' ' + mm + '분' : '');
 }
-/* 휴게시간 없음 · 종료가 시작보다 이르면 익일로 계산 */
+/* 휴게시간 없음 · 종료가 시작보다 이르면 익일로 계산 · 진행중(종료 없음)은 0시간 */
 function hoursOf(s){
+  if (!s || !s.start || !s.end) return 0;
   let m = timeMin(s.end) - timeMin(s.start);
   if (m < 0) m += 1440;
   if (!isFinite(m) || m < 0) m = 0;
@@ -769,7 +816,52 @@ function hoursOf(s){
 const hoursLabel = s => hoursOf(s) + '시간';
 function endLabel(s){
   if (!s) return '';
+  if (!s.end) return '진행중';
   return (timeMin(s.end) < timeMin(s.start) ? '익일 ' : '') + (s.end || '-');
+}
+
+/* ============================================================
+   ON / OFF 시각 표시 헬퍼
+   ON·OFF 를 누른 순간의 시각을 onAt·offAt(ISO)에 남기고,
+   시작·종료 시간은 1~6시간 버튼 등으로 고칠 수 있는 계산용 값으로 함께 둔다.
+   ============================================================ */
+const pad2 = n => String(n).padStart(2, '0');
+function hmOf(when){
+  const d = when ? new Date(when) : new Date();
+  if (isNaN(d)) return '';
+  return pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+}
+function isOpenShift(s){ return !!s && !s.end; }
+function onHM(s){ return (s && s.onAt) ? hmOf(s.onAt) : ((s && s.start) || '-'); }
+function offHM(s){ if (!s) return ''; if (s.offAt) return hmOf(s.offAt); return s.end ? endLabel(s) : ''; }
+/* 근무 기록의 시간 문구: ON/OFF 로 잡은 기록이면 'ON 05:56 → OFF 09:12' */
+function onOffText(s){
+  if (!s) return '';
+  if (!s.end) return 'ON ' + onHM(s) + ' · 근무중';
+  if (s.offAt) return 'ON ' + onHM(s) + ' → OFF ' + offHM(s);
+  if (s.onAt) return 'ON ' + onHM(s) + ' · 마감 ' + endLabel(s);
+  return (s.start || '-') + '~' + endLabel(s);
+}
+/* 계산 구간(시작·종료)이 실제 ON/OFF 시각과 달라졌는지 */
+function isAdjusted(s){
+  if (!s || !s.end) return false;
+  return (!!s.onAt && hmOf(s.onAt) !== s.start) || (!!s.offAt && hmOf(s.offAt) !== s.end);
+}
+function shiftStartDate(s){
+  if (!s) return null;
+  if (s.onAt){ const d = new Date(s.onAt); if (!isNaN(d)) return d; }
+  if (!s.date || !s.start) return null;
+  const d = parseISO(s.date);
+  const [h, m] = String(s.start).split(':').map(Number);
+  d.setHours(h || 0, m || 0, 0, 0);
+  return d;
+}
+/* 진행중인 건이 지금까지 몇 분째인지 */
+function openMinutes(s){
+  const st = shiftStartDate(s);
+  if (!st) return 0;
+  const m = Math.round((Date.now() - st.getTime()) / 60000);
+  return m > 0 ? m : 0;
 }
 function shiftDateISO(off){
   const d = new Date();
@@ -1237,7 +1329,9 @@ function rowLog(r){
     workerPaidDate: r.worker_paid_date || null,
     workerPaidBy: r.worker_paid_by || null,
     createdBy: r.created_by || '',
-    createdAt: r.created_at || null
+    createdAt: r.created_at || null,
+    onAt: r.on_at || null,
+    offAt: r.off_at || null
   };
 }
 function colLog(s){
@@ -1262,7 +1356,9 @@ function colLog(s){
     worker_paid_date: s.workerPaidDate || null,
     worker_paid_by: s.workerPaidBy || null,
     created_by: s.createdBy || '',
-    created_at: s.createdAt || new Date().toISOString()
+    created_at: s.createdAt || new Date().toISOString(),
+    on_at: s.onAt || null,
+    off_at: s.offAt || null
   };
 }
 function rowSms(r){
@@ -1377,15 +1473,35 @@ function noteDbError(err){
 }
 
 /* ---------- 쓰기 ---------- */
+/* 예전 스키마에 아직 없는 칸(on_at·off_at)을 보내면 생기는 오류에서 칸 이름을 뽑아낸다 */
+function missingColumnOf(err){
+  if (!err) return '';
+  const code = String(err.code || '');
+  const msg = String(err.message || '');
+  if (code !== 'PGRST204' && !/column/i.test(msg)) return '';
+  const m = msg.match(/'([A-Za-z0-9_]+)'\s*column/i) || msg.match(/column\s+"?([A-Za-z0-9_]+)"?/i);
+  return m ? m[1] : '';
+}
 function dbUpsert(kind, row){
   if (!SYNC.client || SYNC.state !== 'live') return Promise.resolve(false);
   const table = TABLES[kind];
-  try {
-    return SYNC.client.from(table).upsert(row, { onConflict: 'id' }).then(r => {
-      if (r && r.error){ noteDbError(r.error); return false; }
-      return true;
-    }).catch(e => { noteDbError(e); return false; });
-  } catch(e){ noteDbError(e); return Promise.resolve(false); }
+  const send = (payload, left) => {
+    try {
+      return SYNC.client.from(table).upsert(payload, { onConflict: 'id' }).then(r => {
+        if (r && r.error){
+          const col = missingColumnOf(r.error);
+          if (col && left > 0 && payload && !Array.isArray(payload) && Object.prototype.hasOwnProperty.call(payload, col)){
+            const next = Object.assign({}, payload);
+            delete next[col];
+            return send(next, left - 1);
+          }
+          noteDbError(r.error); return false;
+        }
+        return true;
+      }).catch(e => { noteDbError(e); return false; });
+    } catch(e){ noteDbError(e); return Promise.resolve(false); }
+  };
+  return send(row, 3);
 }
 function dbDelete(kind, id){
   if (!SYNC.client || SYNC.state !== 'live' || !id) return Promise.resolve(false);
@@ -1409,10 +1525,16 @@ async function pushRows(workers, clients, logs, sms, expenses){
   let err = null;
   const put = async (table, rows) => {
     if (!rows || !rows.length || err) return;
-    try {
-      const r = await SYNC.client.from(table).upsert(rows, { onConflict: 'id', ignoreDuplicates: true });
-      if (r && r.error) err = r.error;
-    } catch(e){ err = { message: String((e && e.message) || e) }; }
+    let list = rows;
+    for (let i = 0; i < 3; i++){
+      let r;
+      try { r = await SYNC.client.from(table).upsert(list, { onConflict: 'id', ignoreDuplicates: true }); }
+      catch(e){ err = { message: String((e && e.message) || e) }; return; }
+      if (!r || !r.error) return;
+      const col = missingColumnOf(r.error);
+      if (!col || !list.some(x => Object.prototype.hasOwnProperty.call(x, col))){ err = r.error; return; }
+      list = list.map(x => { const c = Object.assign({}, x); delete c[col]; return c; });
+    }
   };
   await put(TABLES.workers, workers);
   await put(TABLES.clients, clients);
@@ -2021,29 +2143,58 @@ function viewHome(){
   const msgs = DB.messages.slice().sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 2);
 
   const todayPills = todays.length
-    ? todays.map(s => '<button class="pill" data-act="today-edit" data-id="' + s.id + '">' + esc(wName(s)) + ' · ' + esc(s.place || '-') + ' · ' + hoursLabel(s) + ' ✎</button>').join('')
+    ? todays.map(s => '<button class="pill" data-act="today-edit" data-id="' + s.id + '">' + esc(wName(s)) + ' · ' + esc(onOffText(s)) + (s.place ? ' · ' + esc(s.place) : '') + ' ✎</button>').join('')
     : '<span class="pill">아직 등록된 출역이 없습니다</span>';
 
   const onN = DB.workers.filter(w => todays.some(s => s.workerId === w.id)).length;
+  const busyN = DB.workers.filter(w => todays.some(s => s.workerId === w.id && isOpenShift(s))).length;
   const rosterRows = DB.workers.slice()
     .sort((a, b) => (a.status === RESERVE ? 1 : 0) - (b.status === RESERVE ? 1 : 0))
     .map(w => {
       const rows = todays.filter(s => s.workerId === w.id).sort((a, b) => timeMin(a.start) - timeMin(b.start));
-      const on = rows.length > 0;
-      const sub = on
-        ? rows.map(s => (s.start || '-') + '~' + endLabel(s) + ' · ' + (s.place || '-') + ' · ' + hoursLabel(s)).join(' / ') +
-          ' · 일당 ' + won(rows.reduce((a, s) => a + num(s.wage), 0))
-        : (w.status === RESERVE ? '예비 인력 · 오늘 미출역' : '오늘 미출역');
-      return '<div class="roster-row' + (on ? ' on' : '') + '">' +
-        '<div class="roster-id"><b>' + esc(w.name) + '</b><span class="roster-sub">' + esc(sub) + '</span></div>' +
-        (on ? '<button class="mini" data-act="billing-sms" data-id="' + rows.map(x => x.id).join(',') + '">계좌 문자</button>' : '') +
-        (on ? '<button class="mini" data-act="today-edit" data-id="' + rows[0].id + '">시간 수정</button>' : '') +
-        '<button class="switch' + (on ? ' on' : '') + '" data-act="today-toggle" data-worker="' + w.id + '" aria-pressed="' + (on ? 'true' : 'false') + '" aria-label="' + esc(w.name) + ' 오늘 출역 ' + (on ? 'ON' : 'OFF') + '">' + (on ? 'ON' : 'OFF') + '</button>' +
+      const open = rows.filter(isOpenShift)[0];
+      const done = rows.filter(s => !isOpenShift(s));
+      const on = !!open;
+      const sumWageW = rows.reduce((a, s) => a + num(s.wage), 0);
+      const sumMin = rows.reduce((a, s) => a + Math.round(num(hoursOf(s)) * 60), 0);
+      const sub = open
+        ? 'ON ' + onHM(open) + ' · 근무중' + (openMinutes(open) >= 1 ? ' ' + durLabel(openMinutes(open)) + ' 경과' : '') + (open.place ? ' · ' + open.place : '')
+        : (done.length
+            ? '오늘 ' + done.length + '건 · ' + durLabel(sumMin) + (sumWageW ? ' · 일당 ' + won(sumWageW) : '')
+            : (w.status === RESERVE ? '예비 인력 · 오늘 미출역' : '오늘 미출역'));
+
+      /* 완료된 건들을 1차·2차… 로 차곡차곡 */
+      const doneList = done.length
+        ? '<div class="rs-list">' + done.map((s, i) =>
+            '<div class="rs">' +
+              '<span class="rs-n">' + (i + 1) + '차</span>' +
+              '<span class="rs-t">' + esc(onOffText(s)) + '</span>' +
+              '<span class="rs-b">' +
+                '<button class="mini" data-act="billing-sms" data-id="' + s.id + '">계좌 문자</button>' +
+                '<button class="mini" data-act="today-edit" data-id="' + s.id + '">시간</button>' +
+                '<button class="mini danger" data-act="del-shift" data-id="' + s.id + '">삭제</button>' +
+              '</span>' +
+              '<span class="rs-m">' + hoursLabel(s) + (isAdjusted(s) ? ' (고침)' : '') +
+                (num(s.wage) ? ' · ' + won(s.wage) : ' · 일당 미정') +
+                (s.place ? ' · ' + esc(s.place) : '') + '</span>' +
+            '</div>').join('') + '</div>'
+        : '';
+
+      return '<div class="roster-item' + (on ? ' on' : '') + '">' +
+        '<div class="roster-row' + (on ? ' on' : '') + '">' +
+          '<div class="roster-id"><b>' + esc(w.name) + '</b><span class="roster-sub">' + esc(sub) + '</span></div>' +
+          (open ? '<button class="mini" data-act="today-edit" data-id="' + open.id + '">시간·거래처</button>' : '') +
+          (open ? '<button class="mini danger" data-act="del-shift" data-id="' + open.id + '">삭제</button>' : '') +
+          '<button class="switch' + (on ? ' on' : '') + '" data-act="today-toggle" data-worker="' + w.id + '" aria-pressed="' + (on ? 'true' : 'false') + '" aria-label="' + esc(w.name) + ' 오늘 출역 ' + (on ? 'ON' : 'OFF') + '">' + (on ? 'ON' : 'OFF') + '</button>' +
+        '</div>' +
+        doneList +
       '</div>';
     }).join('');
   const rosterHTML = DB.workers.length
-    ? '<h2 class="sec">오늘 출역 체크 <span class="muted" style="font-size:12px;font-weight:700">' + onN + '/' + DB.workers.length + '명 ON</span></h2>' +
-      '<div class="roster">' + rosterRows + '</div>'
+    ? '<h2 class="sec">오늘 출역 체크 <span class="muted" style="font-size:12px;font-weight:700">' + onN + '/' + DB.workers.length + '명 출역' +
+      (busyN ? ' · 근무중 ' + busyN + '명' : '') + '</span></h2>' +
+      '<div class="roster">' + rosterRows + '</div>' +
+      '<p class="form-note">ON을 누르면 그 순간의 시각이 시작, OFF를 누르면 그 순간의 시각이 종료로 기록됩니다 · 하루에 여러 번 가능</p>'
     : '<div class="card muted" style="font-size:12.5px">등록된 인력이 없습니다. <b>인력</b> 탭에서 먼저 추가하세요.</div>';
 
   const msgBits = msgs.length ? msgs.map(m => {
@@ -2135,22 +2286,25 @@ function payCellHTML(s, kind){
 function recHTML(s){
   const both = !!(s.clientPaid && s.workerPaid);
   const hours = hoursOf(s);
+  const open = isOpenShift(s);
   return '<div class="rec ' + (both ? 'is-done' : '') + '">' +
     '<div class="rec-top">' +
       '<div class="rec-who">' + esc(wName(s)) +
+        (open ? '<span class="badge wait">근무중</span>' : '') +
         (both ? '<span class="badge ok">정산완료</span>' : '') +
       '</div>' +
-      '<div class="rec-amt">' + won(s.wage) + '<small>시급 ' + won(s.rate) + ' × ' + hours + '시간</small></div>' +
+      '<div class="rec-amt">' + (open ? '진행중' : won(s.wage)) +
+        (open ? '<small>OFF를 누르면 일당이 계산됩니다</small>' : '<small>시급 ' + won(s.rate) + ' × ' + hours + '시간</small>') + '</div>' +
     '</div>' +
-    '<div class="rec-meta">' + esc(fmtDate(s.date)) + ' · ' + esc(s.start || '-') + '~' + esc(endLabel(s)) +
-      ' (' + hoursLabel(s) + ') · ' + esc(s.place || '-') + '</div>' +
+    '<div class="rec-meta">' + esc(fmtDate(s.date)) + ' · ' + esc(onOffText(s)) +
+      (open ? '' : ' (' + hoursLabel(s) + (isAdjusted(s) ? ' · 고침' : '') + ')') + ' · ' + esc(s.place || '-') + '</div>' +
     (s.memo ? '<div class="rec-memo">' + esc(s.memo) + '</div>' : '') +
-    '<div class="paygrid">' + payCellHTML(s, 'client') + payCellHTML(s, 'worker') + '</div>' +
+    (open ? '' : '<div class="paygrid">' + payCellHTML(s, 'client') + payCellHTML(s, 'worker') + '</div>') +
     '<div class="rec-foot">' +
       '<span class="rec-by">등록 ' + esc(aName(s.createdBy)) + '</span>' +
       '<span class="rec-acts">' +
-        '<button class="mini" data-act="billing-sms" data-id="' + s.id + '">계좌 문자</button>' +
-        '<button class="mini" data-act="edit-shift" data-id="' + s.id + '">수정</button>' +
+        (open ? '' : '<button class="mini" data-act="billing-sms" data-id="' + s.id + '">계좌 문자</button>') +
+        '<button class="mini" data-act="edit-shift" data-id="' + s.id + '">' + (open ? '마감·거래처' : '수정') + '</button>' +
         '<button class="mini danger" data-act="del-shift" data-id="' + s.id + '">삭제</button>' +
       '</span>' +
     '</div>' +
@@ -2241,6 +2395,8 @@ function workerListHTML(){
 
   return list.map(w => {
     const unpaid = sumWage(DB.shifts.filter(s => s.workerId === w.id && !s.workerPaid));
+    const freq = workerClientStats(w.id);
+    const freqTop = freq.slice(0, 3);
     return '<div class="wcard">' +
       '<div class="wcard-top">' +
         '<div>' +
@@ -2259,15 +2415,89 @@ function workerListHTML(){
       '<div class="wcard-rows">' +
         '<div><span>계좌</span>' + esc(w.account || '-') + '</div>' +
         '<div><span>메모</span>' + esc(w.memo || '-') + '</div>' +
+        (freqTop.length
+          ? '<div><span>자주 가는 곳</span>' + freqTop.map(o => esc(o.name) + ' <b>' + o.count + '회</b>').join(' · ') + '</div>'
+          : '<div><span>자주 가는 곳</span><span class="muted">기록 없음</span></div>') +
         (unpaid > 0 ? '<div><span>지급 대기</span><b style="color:var(--red)">' + won(unpaid) + '</b></div>' : '') +
       '</div>' +
       '<div class="wcard-foot">' +
         '<a class="mini" href="tel:' + esc(unpad(w.phone)) + '">전화</a>' +
+        (freq.length ? '<button class="mini" data-act="worker-stats" data-id="' + w.id + '">거래처 통계 ' + freq.length + '곳</button>' : '') +
         '<button class="mini" data-act="edit-worker" data-id="' + w.id + '">수정</button>' +
         '<button class="mini danger" data-act="del-worker" data-id="' + w.id + '">삭제</button>' +
       '</div>' +
     '</div>';
   }).join('');
+}
+
+/* ============================================================
+   개인별 거래처 통계 — 누가 어느 거래처에 몇 번 갔는지
+   ============================================================ */
+function workerClientStats(workerId){
+  const map = new Map();
+  (DB.shifts || []).forEach(s => {
+    if (!workerId || s.workerId !== workerId) return;
+    const c = s.clientId && s.clientId !== '__custom' ? clientById(s.clientId) : null;
+    const name = (c && c.name) || s.place || '';
+    if (!name) return;
+    const key = c ? c.id : 'name:' + name;
+    const o = map.get(key) || { key: key, clientId: c ? c.id : '', name: name, count: 0, hours: 0, pay: 0, last: '' };
+    o.count++;
+    o.hours += hoursOf(s);
+    o.pay += num(s.wage);
+    if (String(s.date || '') > o.last) o.last = s.date || '';
+    map.set(key, o);
+  });
+  return Array.from(map.values()).sort((a, b) =>
+    (b.count - a.count) || String(b.last).localeCompare(String(a.last)) || (b.hours - a.hours)
+  );
+}
+/* 거래처 후보를 이 인력이 자주 간 순으로 정렬 */
+function sortClientsByFreq(list, workerId){
+  const freq = workerClientStats(workerId);
+  const rank = new Map(), cnt = new Map();
+  freq.forEach((o, i) => { if (o.clientId){ rank.set(o.clientId, i); cnt.set(o.clientId, o.count); } });
+  return list.slice().sort((a, b) => {
+    const ra = rank.has(a.id) ? rank.get(a.id) : 9999;
+    const rb = rank.has(b.id) ? rank.get(b.id) : 9999;
+    if (ra !== rb) return ra - rb;
+    return String(a.name || '').localeCompare(String(b.name || ''));
+  });
+}
+function freqChipsHTML(workerId, picked){
+  const top = workerClientStats(workerId).filter(o => o.clientId).slice(0, 6);
+  if (!top.length) return '';
+  return '<div class="freq-wrap">' +
+    '<div class="freq-title">⭐ 자주 가는 거래처 (많이 간 순)</div>' +
+    '<div class="freq-chips">' + top.map(o =>
+      '<button type="button" class="freq-chip' + (picked === o.clientId ? ' on' : '') + '" data-freq="' + esc(o.clientId) + '">' +
+        esc(o.name) + '<small>' + o.count + '회</small></button>').join('') +
+    '</div></div>';
+}
+function openWorkerStats(workerId){
+  const w = workerById(workerId);
+  if (!w) return;
+  const stats = workerClientStats(workerId);
+  const totalN = stats.reduce((a, o) => a + o.count, 0);
+  const totalH = stats.reduce((a, o) => a + o.hours, 0);
+  const totalP = stats.reduce((a, o) => a + o.pay, 0);
+  const rows = stats.length
+    ? stats.map((o, i) =>
+        '<div class="stat-row">' +
+          '<span class="stat-rank">' + (i + 1) + '</span>' +
+          '<span class="stat-name">' + esc(o.name) + '</span>' +
+          '<span class="stat-num">' + o.count + '회</span>' +
+          '<span class="stat-sub">' + o.hours + '시간 · ' + won(o.pay) + (o.last ? ' · 최근 ' + esc(fmtDate(o.last)) : '') + '</span>' +
+        '</div>').join('')
+    : '<p class="muted" style="font-size:12.5px">아직 근무 기록이 없습니다.</p>';
+  openModal({
+    title: esc(w.name) + ' · 거래처 통계',
+    sub: '총 ' + totalN + '건 · ' + stats.length + '곳 · ' + totalH + '시간 · ' + won(totalP),
+    body: '<div class="stat-list">' + rows + '</div>',
+    submitLabel: '닫기',
+    cancelLabel: false,
+    onSubmit: (wrap, close) => close()
+  });
 }
 
 function viewWorkers(){
@@ -2672,14 +2902,20 @@ function ensureClient(name, memo){
   return { client: row, created: true };
 }
 
-function mountClientPicker(wrap, s){
+function mountClientPicker(wrap, s, opts){
+  opts = opts || {};
   const input = $('#fClientInput', wrap);
   const list = $('#fAcList', wrap);
   const hidden = $('#fClient', wrap);
   const pickEl = $('#fClientPicked', wrap);
   const customWrap = $('#fCustomWrap', wrap);
   const customInput = $('[name=customPlace]', wrap);
-  if (!input || !list || !hidden || !pickEl || !customWrap) return;
+  if (!input || !list || !hidden || !pickEl || !customWrap) return null;
+  const curWorkerId = () => {
+    const el = $('#fqWorker', wrap) || $('#fWorker', wrap);
+    return el ? el.value : '';
+  };
+  const changed = cid => { try { if (opts.onChange) opts.onChange(cid || ''); } catch(e){} };
 
   let selId = '';
   if (s){
@@ -2721,23 +2957,28 @@ function mountClientPicker(wrap, s){
   function openList(showAll){
     const raw = input.value.trim();
     const q = showAll ? '' : raw.toLowerCase();
-    const found = DB.clients.filter(c => !q ||
+    const freq = workerClientStats(curWorkerId());
+    const rank = new Map(), cnt = new Map();
+    freq.forEach((o, i) => { if (o.clientId){ rank.set(o.clientId, i); cnt.set(o.clientId, o.count); } });
+    const found = sortClientsByFreq(DB.clients.filter(c => !q ||
       (c.name || '').toLowerCase().includes(q) ||
       (c.manager || '').toLowerCase().includes(q) ||
       (c.address || '').toLowerCase().includes(q) ||
       (c.phone || '').includes(q) ||
       (c.memo || '').toLowerCase().includes(q)
-    ).slice(0, 8);
+    ), curWorkerId()).slice(0, 8);
 
     let html = '';
     if (raw && !showAll) {
       html += '<button type="button" class="ac-item custom" data-cid="__custom"><b>직접 입력: "' + esc(raw) + '"</b>' +
         '<small>목록에 없으면 이 이름으로 새 거래처를 등록합니다</small></button>';
     }
-    html += found.map(c =>
-      '<button type="button" class="ac-item" data-cid="' + c.id + '"><b>' + esc(c.name) + '</b>' +
-        '<small>' + esc([c.manager, c.address].filter(Boolean).join(' · ')) + '</small></button>'
-    ).join('');
+    html += found.map(c => {
+      const n = cnt.get(c.id) || 0;
+      return '<button type="button" class="ac-item" data-cid="' + c.id + '"><b>' + esc(c.name) +
+        (n ? ' <span class="badge cnt">' + n + '회</span>' : '') + '</b>' +
+        '<small>' + esc([c.manager, c.address].filter(Boolean).join(' · ')) + '</small></button>';
+    }).join('');
     if (!html) html = '<div class="ac-empty">일치하는 거래처가 없습니다</div>';
     list.innerHTML = html;
     list.hidden = false;
@@ -2771,6 +3012,7 @@ function mountClientPicker(wrap, s){
       input.value = c ? c.name : '';
       paint();
       closeList();
+      changed(cid);
     }
   });
   input.addEventListener('keydown', ev => {
@@ -2788,6 +3030,22 @@ function mountClientPicker(wrap, s){
   });
 
   paint();
+
+  /* 바깥(자주 가는 거래처 칩 등)에서 거래처를 골라 줄 수 있게 */
+  return {
+    select(cid){
+      const c = clientById(cid);
+      if (!c) return;
+      selId = cid;
+      hidden.value = cid;
+      input.value = c.name;
+      paint();
+      closeList();
+      changed(cid);
+    },
+    current(){ return selId; },
+    refresh(){ openList(false); }
+  };
 }
 
 /* ---------- 근무 등록 / 수정 ---------- */
@@ -2801,7 +3059,7 @@ function openShiftModal(id){
   const firstW = workerById((s && s.workerId) || DB.workers[0].id) || DB.workers[0];
   const rate0 = (s && num(s.rate) > 0) ? num(s.rate) : (num(firstW.rate) > 0 ? num(firstW.rate) : RATE);
   const start0 = s ? s.start : '08:00';
-  const end0 = s ? s.end : '17:00';
+  const end0 = s ? (s.end || minToTime(timeMin(start0) + 480)) : '17:00';
   const dur0 = Math.round(hoursOf({ start: start0, end: end0 }) * 60);
   const wage0 = s ? num(s.wage) : Math.round(hoursOf({ start: start0, end: end0 }) * rate0);
 
@@ -2947,26 +3205,95 @@ function openShiftModal(id){
 
 /* ============================================================
    오늘 출역 체크 · 근무시간 바로 등록/수정
+   ON/OFF 를 누른 순간의 현재 시각을 그대로 기록한다.
+   · OFF → ON  : 지금 시각을 시작으로 새 출역 건을 만든다 (하루에 몇 번이든 반복 가능)
+   · ON → OFF : 진행 중(종료 없음)인 건에만 지금 시각을 종료로 넣는다
    ============================================================ */
+function todayRows(workerId){
+  const today = dispatchDateKey();
+  return DB.shifts.filter(s => s.workerId === workerId && s.date === today);
+}
+function openRowsOf(workerId){
+  return todayRows(workerId).filter(s => isOpenShift(s));
+}
 function toggleTodayShift(workerId){
   const w = workerById(workerId);
   if (!w) return;
-  const today = dispatchDateKey();
-  const rows = DB.shifts.filter(s => s.workerId === workerId && s.date === today);
-  if (!rows.length){ openQuickShift({ workerId: workerId }); return; }
-  const what = rows.length === 1
-    ? (rows[0].start || '-') + '~' + endLabel(rows[0]) + ' · ' + (rows[0].place || '-')
-    : '오늘 근무 ' + rows.length + '건';
-  confirmModal('오늘 출역 해제',
-    w.name + ' 님의 ' + what + ' 기록을 삭제합니다. 삭제하면 되돌릴 수 없습니다.', '해제', () => {
-      rows.forEach(s => {
-        DB.shifts = DB.shifts.filter(x => x.id !== s.id);
-        dbDelete('logs', s.id);
-      });
-      saveDB();
-      render();
-      toast(w.name + ' 님 오늘 출역을 해제했습니다');
-    });
+  const open = openRowsOf(workerId);
+  if (open.length) return endShiftNow(w, open);
+  return startShiftNow(w);
+}
+
+/* OFF → ON: 지금 시각으로 새 건 */
+function startShiftNow(w){
+  const now = new Date();
+  const rec = {
+    id: uid(),
+    createdBy: curAdmin().id,
+    createdAt: now.toISOString(),
+    workerId: w.id,
+    workerName: w.name,
+    clientId: '',
+    place: '',
+    date: dispatchDateKey(now),
+    start: hmOf(now),
+    end: '',
+    hours: 0,
+    rate: num(w.rate) > 0 ? num(w.rate) : RATE,
+    wage: 0,
+    breakH: 0,
+    memo: '',
+    clientPaid: false,
+    workerPaid: false,
+    onAt: now.toISOString(),
+    offAt: null
+  };
+  closeStaleOpen(w, rec.date);
+  DB.shifts.push(rec);
+  saveDB();
+  syncShift(rec);
+  render();
+  const mine = DB.shifts.filter(s => s.workerId === w.id && s.date === rec.date);
+  toast(w.name + ' 님 ' + (mine.length > 1 ? mine.length + '차 ' : '') + 'ON ' + rec.start + ' 기록');
+  return rec;
+}
+
+/* 어제 이전에 켜 둔 채 끝나지 않은 건은 0시간으로 마감해 둔다 */
+function closeStaleOpen(w, today){
+  const stale = DB.shifts.filter(s => s.workerId === w.id && isOpenShift(s) && s.date !== today);
+  if (!stale.length) return 0;
+  stale.forEach(s => {
+    s.end = s.start || '00:00';
+    s.hours = 0;
+    s.wage = 0;
+    syncShift(s);
+  });
+  return stale.length;
+}
+
+/* ON → OFF: 진행 중인 건에 지금 시각을 종료로 */
+function endShiftNow(w, open){
+  const now = new Date();
+  const endHM = hmOf(now);
+  open.forEach(s => {
+    s.end = endHM;
+    s.offAt = now.toISOString();
+    s.hours = hoursOf(s);
+    s.wage = Math.round(s.hours * num(s.rate || RATE));
+    syncShift(s);
+  });
+  saveDB();
+  render();
+  const last = open[open.length - 1];
+  const mins = last ? Math.round(num(last.hours) * 60) : 0;
+  if (!last) return;
+  if (mins <= 0){
+    toast(w.name + ' 님 OFF ' + endHM + ' · 같은 시각이라 0시간입니다 · 시간을 골라 주세요');
+    openQuickShift({ id: last.id });
+    return;
+  }
+  toast(w.name + ' 님 OFF ' + endHM + ' · ' + durLabel(mins) + ' · 일당 ' + won(last.wage));
+  return last;
 }
 
 /* 오늘 날짜로 인력·시간·거래처만 골라 바로 저장하는 빠른 입력창 (기존 기록이면 시간 수정)
@@ -2985,7 +3312,11 @@ function openQuickShift(opts){
   const w0 = (existing && workerById(existing.workerId)) || workerById(opts.workerId) || ordered[0] || DB.workers[0];
   const rate0 = existing && num(existing.rate) > 0 ? num(existing.rate) : (num(w0.rate) > 0 ? num(w0.rate) : RATE);
   const start0 = (existing && existing.start) || opts.start || '08:00';
-  const dur0 = existing ? Math.round(hoursOf(existing) * 60) : (num(opts.durMin) > 0 ? num(opts.durMin) : 480);
+  const isOpen = !!existing && isOpenShift(existing);
+  const elapsed = isOpen ? Math.max(10, Math.round(openMinutes(existing) / 10) * 10) : 0;
+  const dur0 = existing
+    ? (existing.end ? Math.round(hoursOf(existing) * 60) : elapsed)
+    : (num(opts.durMin) > 0 ? num(opts.durMin) : 480);
   const end0 = (existing && existing.end) || minToTime(timeMin(start0) + dur0);
   const h0 = Math.round((dur0 || 480) / 6) / 10;   /* 분 → 시간 (소수 1자리) */
 
@@ -2995,6 +3326,8 @@ function openQuickShift(opts){
 
   const body =
     '<p class="form-note" style="font-weight:800;color:#1c43c9">' + esc(fmtDate(day)) + ' 근무를 바로 기록합니다</p>' +
+    (isOpen ? '<p class="form-note">지금 <b>근무중</b> · ON ' + esc(onHM(existing)) + ' · ' + durLabel(openMinutes(existing)) +
+      ' 경과 · 시간을 골라 저장하면 이 건이 마감됩니다</p>' : '') +
     '<label class="f"><span>인력</span><select name="workerId" id="fqWorker">' + workerOpts + '</select></label>' +
     '<div class="dur-chips" role="group" aria-label="근무시간 빠른 선택">' +
       [1,2,3,4,5,6].map(h => '<button type="button" class="dur-chip" data-min="' + (h * 60) + '" data-hours="' + h + '" aria-label="' + h + '시간">' + h + '시간</button>').join('') +
@@ -3006,6 +3339,7 @@ function openQuickShift(opts){
       '<label class="f"><span>시작 시간</span><input type="time" name="start" id="fqStart" step="1800" value="' + esc(start0) + '"></label>' +
       '<label class="f"><span>종료 시간</span><input type="time" name="end" id="fqEnd" step="1800" value="' + esc(end0) + '"></label>' +
     '</div>' +
+    '<div id="fqFreq"></div>' +
     '<label class="f"><span>거래처 (검색 · 목록에 없으면 새로 등록)</span>' +
       '<div class="ac" id="fAcBox">' +
         '<input type="text" id="fClientInput" autocomplete="off" placeholder="거래처명 · 담당자 · 주소로 검색" value="">' +
@@ -3024,7 +3358,7 @@ function openQuickShift(opts){
     (existing && existing.workerPaid ? '<input type="checkbox" id="fWorkerPaid" checked hidden>' : '');
 
   const m = openModal({
-    title: existing ? '오늘 근무시간 수정' : '오늘 근무시간 등록',
+    title: existing ? (isOpen ? '오늘 근무 마감 (거래처·시간)' : '오늘 근무시간 수정') : '오늘 근무시간 등록',
     sub: fmtDate(day) + ' · 시간만 골라도 일당이 계산됩니다',
     body,
     submitLabel: existing ? '수정 저장' : '등록',
@@ -3074,12 +3408,24 @@ function openQuickShift(opts){
     if (hEl) hEl.value = Math.round(durMin / 6) / 10;
     paintCalc();
   });
+  const freqEl = $('#fqFreq', wrap);
+  let picker = null;
+  function paintFreq(){
+    if (!freqEl) return;
+    const wid = wSel ? wSel.value : (existing ? existing.workerId : '');
+    freqEl.innerHTML = freqChipsHTML(wid, picker ? picker.current() : '');
+    $$('[data-freq]', freqEl).forEach(b => b.addEventListener('click', () => {
+      if (picker) picker.select(b.dataset.freq);
+    }));
+  }
   const wSel = $('#fqWorker', wrap);
   if (wSel) wSel.addEventListener('change', () => {
     const w = workerById(wSel.value);
     if (w && num(w.rate) > 0 && rEl){ rEl.value = num(w.rate); paintCalc(); }
+    paintFreq();
   });
-  mountClientPicker(wrap, existing);
+  picker = mountClientPicker(wrap, existing, { onChange: () => paintFreq() });
+  paintFreq();
   paintCalc();
 }
 
@@ -3116,19 +3462,19 @@ function billingShifts(ids){
   return String(ids || '').split(',').map(x => x.trim()).filter(Boolean)
     .map(x => DB.shifts.find(s => s.id === x)).filter(Boolean);
 }
+/* 근무 청구 문자: 날짜 · 인력별 시간/금액 · 합계 · 입금 계좌만 간결하게 (거래처명 제외) */
 function billingMessageText(list, acc){
   const rows = Array.isArray(list) ? list : [list];
   if (!rows.length) return '';
   const s0 = rows[0];
-  const client = clientById(s0.clientId) || clientByName(s0.place);
-  const place = client ? client.name : (s0.place || '');
+  const dateISO = s0.date || todayISO();
   const hours = rows.reduce((a, s) => a + hoursOf(s), 0);
   const sum = rows.reduce((a, s) => a + num(s.wage), 0);
-  const lines = ['[근무 청구] ' + (place ? place + ' ' : '') + fmtDate(s0.date)];
+  const lines = [dateISO];
   rows.forEach(s => {
-    lines.push('- ' + wName(s) + ' · ' + (s.start || '-') + '~' + endLabel(s) + ' (' + hoursLabel(s) + ')');
+    lines.push(wName(s) + ' ' + hoursLabel(s) + ' · ' + won(num(s.wage)));
   });
-  lines.push('합계 ' + hours + '시간 · 청구 금액 ' + won(sum));
+  if (rows.length > 1) lines.push('합계 ' + hours + '시간 · ' + won(sum));
   lines.push('입금 계좌: ' + accountLine(acc));
   return lines.join('\n');
 }
@@ -4570,9 +4916,12 @@ document.addEventListener('click', ev => {
       openShiftModal(null);
       break;
 
-    case 'edit-shift':
-      openShiftModal(id);
+    case 'edit-shift': {
+      const sh = DB.shifts.find(x => x.id === id);
+      if (sh && isOpenShift(sh)) openQuickShift({ id: id });   /* 근무중인 건은 마감·거래처 창으로 */
+      else openShiftModal(id);
       break;
+    }
 
     case 'quick-shift':
       openQuickShift({ workerId: el.dataset.worker || '' });
@@ -4654,7 +5003,8 @@ document.addEventListener('click', ev => {
     case 'del-shift': {
       const s = DB.shifts.find(x => x.id === id);
       if (!s) break;
-      confirmModal('근무 기록 삭제', wName(s) + ' · ' + fmtDate(s.date) + ' · ' + won(s.wage) + '\n삭제하면 되돌릴 수 없습니다.',
+      confirmModal('근무 기록 삭제',
+        wName(s) + ' · ' + fmtDate(s.date) + ' · ' + onOffText(s) + (num(s.wage) ? ' · ' + won(s.wage) : '') + '\n삭제하면 되돌릴 수 없습니다.',
         '삭제', () => {
           DB.shifts = DB.shifts.filter(x => x.id !== id);
           dbDelete('logs', id);
@@ -4676,8 +5026,11 @@ document.addEventListener('click', ev => {
       render();
       break;
 
-    case 'add-worker':
-      openWorkerModal(null);
+    case 'add-worker':      openWorkerModal(null);
+      break;
+
+    case 'worker-stats':
+      openWorkerStats(id || el.dataset.id);
       break;
 
     case 'import-contacts':
