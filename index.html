@@ -848,8 +848,6 @@ function hoursOf(s){
 const hoursLabel = s => hoursOf(s) + '시간';
 /* 근무시간 외 수당(원) · 일당 = 근무시간 × 시급 + 수당 */
 const allowanceOf = s => Math.max(0, Math.round(num(s && s.allowance)));
-const allowanceNote = s => allowanceOf(s) ? ' + 수당 ' + won(allowanceOf(s)) : '';
-const wageOf = s => Math.round(hoursOf(s) * num(s && s.rate)) + allowanceOf(s);
 function endLabel(s){
   if (!s) return '';
   if (!s.end) return '진행중';
