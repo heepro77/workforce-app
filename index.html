@@ -544,6 +544,7 @@
       <button class="tab" data-act="tab" data-tab="clients"><span class="ico">🏢</span>거래처</button>
       <button class="tab" data-act="tab" data-tab="sms"><span class="ico">✉️</span>문자</button>
       <button class="tab" data-act="tab" data-tab="messenger"><span class="ico">💬</span>메신저<span class="tab-badge" id="chatBadge" hidden>0</span></button>
+      <button class="tab" data-act="tab" data-tab="ledger"><span class="ico">📒</span>장부</button>
     </div>
   </nav>
 </div>
@@ -615,6 +616,16 @@ create table if not exists public.wf_sms (
   created_at timestamptz default now()
 );
 
+create table if not exists public.wf_expenses (
+  id text primary key,
+  date text,
+  category text,
+  amount integer,
+  memo text,
+  created_by text,
+  created_at timestamptz default now()
+);
+
 create table if not exists public.wf_messages (
   id text primary key,
   sender text,
@@ -630,7 +641,7 @@ do $$
 declare
   t text;
 begin
-  foreach t in array array['wf_workers', 'wf_clients', 'wf_logs', 'wf_sms', 'wf_messages']
+  foreach t in array array['wf_workers', 'wf_clients', 'wf_logs', 'wf_sms', 'wf_messages', 'wf_expenses']
   loop
     if not exists (
       select 1 from pg_publication_tables
@@ -650,6 +661,7 @@ alter table public.wf_clients  enable row level security;
 alter table public.wf_logs     enable row level security;
 alter table public.wf_sms      enable row level security;
 alter table public.wf_messages enable row level security;
+alter table public.wf_expenses enable row level security;
 
 drop policy if exists wf_anon_all on public.wf_workers;
 create policy wf_anon_all on public.wf_workers  for all to anon, authenticated using (true) with check (true);
@@ -666,8 +678,11 @@ create policy wf_anon_all on public.wf_sms      for all to anon, authenticated u
 drop policy if exists wf_anon_all on public.wf_messages;
 create policy wf_anon_all on public.wf_messages for all to anon, authenticated using (true) with check (true);
 
+drop policy if exists wf_anon_all on public.wf_expenses;
+create policy wf_anon_all on public.wf_expenses for all to anon, authenticated using (true) with check (true);
+
 grant select, insert, update, delete on
-  public.wf_workers, public.wf_clients, public.wf_logs, public.wf_sms, public.wf_messages
+  public.wf_workers, public.wf_clients, public.wf_logs, public.wf_sms, public.wf_messages, public.wf_expenses
   to anon, authenticated;
 
 </script>
@@ -1004,6 +1019,7 @@ function upgradeV2(v2){
 
 /* 이미 저장된 v2 데이터에 빠진 필드가 있어도 화면이 깨지지 않게 보정 */
 function normalizeDB(db){
+  if (!Array.isArray(db.expenses)) db.expenses = [];
   if (!Array.isArray(db.chat)) db.chat = [];
   db.version = 3;
   db.workers = db.workers.map(w => {
@@ -1076,6 +1092,7 @@ const ui = {
   smsQuery: '',
   smsSel: new Set(),
   smsBody: '',
+  ledgerMonth: 'current',
   chatBody: '',
   chatTag: ''
 };
@@ -1099,9 +1116,10 @@ const sumWage = arr => arr.reduce((a, s) => a + num(s.wage), 0);
    ============================================================ */
 const SB_URL = 'https://jcwqckpeermclndcerqq.supabase.co';
 const SB_PUBLISHABLE_KEY = 'sb_publishable_g4AH8ZbBoj3STVdgnRPeuA_lMxAicek';
-const TABLES = { workers: 'wf_workers', clients: 'wf_clients', logs: 'wf_logs', sms: 'wf_sms', chat: 'wf_messages' };
-const TABLE_LIST = ['workers', 'clients', 'logs', 'sms', 'chat'];
-const TABLE_LABEL = { workers: 'wf_workers (인력)', clients: 'wf_clients (거래처)', logs: 'wf_logs (근무·입금)', sms: 'wf_sms (문자)', chat: 'wf_messages (메신저)' };
+const TABLES = { workers: 'wf_workers', clients: 'wf_clients', logs: 'wf_logs', sms: 'wf_sms', chat: 'wf_messages', expenses: 'wf_expenses' };
+const TABLE_LIST = ['workers', 'clients', 'logs', 'sms', 'chat', 'expenses'];
+const TABLE_LABEL = { workers: 'wf_workers (인력)', clients: 'wf_clients (거래처)', logs: 'wf_logs (근무·입금)', sms: 'wf_sms (문자)', chat: 'wf_messages (메신저)', expenses: 'wf_expenses (지출)' };
+const CORE_TABLES = ['workers', 'clients', 'logs', 'sms', 'chat'];   /* 지출 표가 없어도 실시간 연결은 유지 */
 const CHAT_TAGS = ['', '현장', '근무', '정산', '공지'];
 const SEED_FLAG = 'wfs_db_seeded_v1';
 const SEEN_PREFIX = 'wfs_chat_seen_';
@@ -1270,6 +1288,28 @@ function colSms(m){
     created_at: new Date().toISOString()
   };
 }
+function rowExpense(r){
+  return {
+    id: r.id,
+    date: r.date || '',
+    category: r.category || '',
+    amount: num(r.amount),
+    memo: r.memo || '',
+    createdBy: r.created_by || '',
+    createdAt: r.created_at || null
+  };
+}
+function colExpense(e){
+  return {
+    id: e.id,
+    date: e.date || '',
+    category: e.category || '',
+    amount: Math.round(num(e.amount)),
+    memo: e.memo || '',
+    created_by: e.createdBy || '',
+    created_at: e.createdAt || new Date().toISOString()
+  };
+}
 function rowChat(r){
   return {
     id: r.id,
@@ -1360,8 +1400,9 @@ function syncClientRow(c){ return dbUpsert('clients', colClient(c)); }
 function syncShift(s){ return dbUpsert('logs', colLog(s)); }
 function syncSms(m){ return dbUpsert('sms', colSms(m)); }
 function syncChatMsg(m){ return dbUpsert('chat', colChat(m)); }
+function syncExpense(e){ return dbUpsert('expenses', colExpense(e)); }
 
-async function pushRows(workers, clients, logs, sms){
+async function pushRows(workers, clients, logs, sms, expenses){
   if (!SYNC.client) return { ok: false, err: 'DB 클라이언트가 없습니다' };
   let err = null;
   const put = async (table, rows) => {
@@ -1375,6 +1416,7 @@ async function pushRows(workers, clients, logs, sms){
   await put(TABLES.clients, clients);
   await put(TABLES.logs, logs);
   await put(TABLES.sms, sms);
+  await put(TABLES.expenses, expenses || []);
   if (err) noteDbError(err);
   return { ok: !err, err: err ? String(err.message || err) : '' };
 }
@@ -1409,6 +1451,7 @@ function localArr(kind){
   if (kind === 'logs') return DB.shifts;
   if (kind === 'sms') return DB.messages;
   if (kind === 'chat') return DB.chat;
+  if (kind === 'expenses') return DB.expenses;
   return null;
 }
 function mapRow(kind, r){
@@ -1416,6 +1459,7 @@ function mapRow(kind, r){
   if (kind === 'clients') return rowClient(r);
   if (kind === 'logs') return rowLog(r);
   if (kind === 'sms') return rowSms(r);
+  if (kind === 'expenses') return rowExpense(r);
   return rowChat(r);
 }
 function upsertLocal(kind, row){
@@ -1486,10 +1530,11 @@ async function loadFromDb(){
     workers: DB.workers.slice(),
     clients: DB.clients.slice(),
     logs: DB.shifts.slice(),
-    sms: DB.messages.slice()
+    sms: DB.messages.slice(),
+    expenses: (DB.expenses || []).slice()
   };
   const info = {};
-  const uploads = { workers: [], clients: [], logs: [], sms: [] };
+  const uploads = { workers: [], clients: [], logs: [], sms: [], expenses: [] };
 
   TABLE_LIST.forEach(k => {
     const r = res[k] || {};
@@ -1520,9 +1565,10 @@ async function loadFromDb(){
 
   SYNC.counts = info;
   SYNC.lastLoadAt = Date.now();
-  const allOk = TABLE_LIST.every(k => info[k].ok);
+  const allOk = CORE_TABLES.every(k => info[k].ok);
   const coreOk = ['workers', 'clients', 'logs'].every(k => info[k].ok);
-  const missingNames = TABLE_LIST.filter(k => !info[k].ok).map(k => TABLES[k]);
+  const missingNames = CORE_TABLES.filter(k => !info[k].ok).map(k => TABLES[k]);
+  SYNC.expensesOk = !!(info.expenses && info.expenses.ok);
 
   if (allOk){
     setDbState('live', '');
@@ -1534,13 +1580,14 @@ async function loadFromDb(){
       : 'DB 연결이 완전하지 않습니다');
   }
 
-  const upN = uploads.workers.length + uploads.clients.length + uploads.logs.length + uploads.sms.length;
+  const upN = uploads.workers.length + uploads.clients.length + uploads.logs.length + uploads.sms.length + uploads.expenses.length;
   if (allOk && upN && !localStorage.getItem(SEED_FLAG)){
     const r = await pushRows(
       uploads.workers.map(colWorker),
       uploads.clients.map(colClient),
       uploads.logs.map(colLog),
-      uploads.sms.map(colSms)
+      uploads.sms.map(colSms),
+      uploads.expenses.map(colExpense)
     );
     if (r.ok){
       try { localStorage.setItem(SEED_FLAG, new Date().toISOString()); } catch(e){}
@@ -1574,6 +1621,7 @@ function subscribeRealtime(){
   try {
     ch = SYNC.client.channel('wf-realtime');
     TABLE_LIST.forEach(k => {
+      if (SYNC.counts && SYNC.counts[k] && !SYNC.counts[k].ok) return;   /* 없는 표는 구독하지 않는다 */
       ch.on('postgres_changes', { event: '*', schema: 'public', table: TABLES[k] }, payload => onRealtime(k, payload));
     });
     ch.subscribe(status => {
@@ -1942,10 +1990,11 @@ function renderTabbar(){
 
 function render(){
   repairQpInDB(SYNC.state === 'live');
+  if (!$$('.modal-wrap').length) navReplace({ tab: ui.tab });
   renderHeader();
   const views = {
     home: viewHome, shifts: viewShifts, workers: viewWorkers,
-    clients: viewClients, sms: viewSms, messenger: viewMessenger
+    clients: viewClients, sms: viewSms, messenger: viewMessenger, ledger: viewLedger
   };
   document.body.classList.toggle('chatting', ui.tab === 'messenger');
   $('#view').innerHTML = (views[ui.tab] || viewHome)();
@@ -2446,6 +2495,54 @@ function renderSmsList(){
 /* ============================================================
    모달
    ============================================================ */
+/* ============================================================
+   안드로이드 뒤로가기 — 모달은 닫히고, 탭은 직전 탭으로
+   ============================================================ */
+const NAV = { seq: 0, pending: 0 };
+const NAV_TABS = ['home', 'shifts', 'workers', 'clients', 'sms', 'messenger', 'ledger'];
+
+function navPush(state){
+  try { history.pushState(state, ''); } catch(e){}
+}
+function navReplace(state){
+  try {
+    if (history.state && history.state.modal) return;   /* 모달 진입 상태는 건드리지 않는다 */
+    history.replaceState(state, '');
+  } catch(e){}
+}
+function navStateModal(){
+  return (history.state && history.state.modal) || '';
+}
+function navStateTab(){
+  const st = history.state;
+  return st && st.tab ? st.tab : '';
+}
+function topModalEl(){
+  const list = $$('.modal-wrap');
+  return list.length ? list[list.length - 1] : null;
+}
+function closeTopModalFromUi(){
+  const top = topModalEl();
+  if (!top) return false;
+  if (top.__closeNav) top.__closeNav();
+  else { top.remove(); document.body.style.overflow = ''; }
+  return true;
+}
+window.addEventListener('popstate', () => {
+  if (NAV.pending > 0){ NAV.pending--; return; }
+  const top = topModalEl();
+  if (top){
+    if (top.__closeFromHistory) top.__closeFromHistory();
+    else { top.remove(); document.body.style.overflow = ''; }
+    return;
+  }
+  const t = navStateTab();
+  if (t && t !== ui.tab && NAV_TABS.indexOf(t) >= 0){
+    ui.tab = t;
+    render();
+  }
+});
+
 function openModal(opts){
   const wrap = document.createElement('div');
   wrap.className = 'modal-wrap';
@@ -2465,17 +2562,28 @@ function openModal(opts){
     '</div>';
   document.body.appendChild(wrap);
   document.body.style.overflow = 'hidden';
-  const close = () => {
+  const navToken = 'm' + (++NAV.seq);
+  wrap.setAttribute('data-nav', navToken);
+  navPush({ modal: navToken, tab: ui.tab });
+  const close = (fromHistory) => {
+    if (!wrap.parentNode) return;
     wrap.remove();
     document.body.style.overflow = '';
     if (renderDirty){
       renderDirty = false;
       setTimeout(() => { try { render(); } catch(e){} }, 0);
     }
+    if (!fromHistory && navStateModal() === navToken){
+      NAV.pending++;
+      try { history.back(); } catch(e){}
+      setTimeout(() => { NAV.pending = 0; }, 900);
+    }
   };
-  $$('[data-close]', wrap).forEach(b => b.addEventListener('click', close));
+  wrap.__closeNav = () => close(false);
+  wrap.__closeFromHistory = () => close(true);
+  $$('[data-close]', wrap).forEach(b => b.addEventListener('click', () => close(false)));
   const bd = $('.modal-backdrop', wrap);
-  if (bd) bd.addEventListener('click', close);
+  if (bd) bd.addEventListener('click', () => close(false));
   const sub = $('[data-submit]', wrap);
   if (sub) sub.addEventListener('click', () => { if (opts.onSubmit) opts.onSubmit(wrap, close); });
   const form = $('.modal-body', wrap);
@@ -3807,7 +3915,7 @@ function contactDupMap(){
 /* ---------- 파일 선택 모달 ---------- */
 function openContactImportModal(kind){
   const target = kind === 'client' ? 'client' : 'worker';
-  $$('.modal-wrap').forEach(el => el.remove());
+  while (topModalEl()) closeTopModalFromUi();
   document.body.style.overflow = '';
   const body =
     '<label class="file-drop" for="fContactFile">' +
@@ -4064,6 +4172,212 @@ function repairQpInDB(syncBack){
   return n;
 }
 
+/* ============================================================
+   📒 장부 — 월별 요약 · 거래처별 · 인력별 · 일일 지출
+   ============================================================ */
+const CLIENT_RATE_KEY = 'wfp_client_rates';
+const EXPENSE_CATS = ['식대', '유류비', '교통비', '자재비', '기타'];
+
+function clientRates(){
+  try { return JSON.parse(localStorage.getItem(CLIENT_RATE_KEY) || '{}') || {}; } catch(e){ return {}; }
+}
+function clientRate(id){
+  if (!id || id === '__custom') return 0;
+  const v = num(clientRates()[id]);
+  return v > 0 ? v : 0;
+}
+function setClientRate(id, v){
+  if (!id || id === '__custom') return;
+  const m = clientRates();
+  if (num(v) > 0) m[id] = Math.round(num(v));
+  else delete m[id];
+  try { localStorage.setItem(CLIENT_RATE_KEY, JSON.stringify(m)); } catch(e){}
+}
+function monthKeyOf(x){ return String((x && x.date) || '').slice(0, 7); }
+/* 거래처 청구액: 청구 시급이 있으면 시간 × 청구 시급, 없으면 근무 급여 */
+function billAmount(s){
+  const cr = clientRate(s.clientId);
+  if (cr > 0) return Math.round(hoursOf(s) * cr);
+  return num(s.wage);
+}
+function ledgerMonths(){
+  const set = {};
+  (DB.shifts || []).forEach(s => { const k = monthKeyOf(s); if (k) set[k] = 1; });
+  (DB.expenses || []).forEach(e => { const k = monthKeyOf(e); if (k) set[k] = 1; });
+  return Object.keys(set).sort().reverse();
+}
+function ledgerPeriod(){
+  if (ui.ledgerMonth === 'all') return 'all';
+  if (ui.ledgerMonth && ui.ledgerMonth !== 'current') return ui.ledgerMonth;
+  const cur = todayISO().slice(0, 7);
+  const months = ledgerMonths();
+  return months.indexOf(cur) >= 0 ? cur : (months[0] || cur);
+}
+const inPeriod = (x, p) => p === 'all' || monthKeyOf(x) === p;
+
+function viewLedger(){
+  const months = ledgerMonths();
+  const p = ledgerPeriod();
+  const shifts = (DB.shifts || []).filter(s => inPeriod(s, p));
+  const exps = (DB.expenses || []).filter(e => inPeriod(e, p))
+    .slice().sort((a, b) => String(b.date).localeCompare(String(a.date)));
+
+  const rev = shifts.reduce((a, s) => a + billAmount(s), 0);
+  const labor = shifts.reduce((a, s) => a + num(s.wage), 0);
+  const spend = exps.reduce((a, e) => a + num(e.amount), 0);
+  const net = rev - labor - spend;
+  const dueC = shifts.filter(s => !s.clientPaid).reduce((a, s) => a + billAmount(s), 0);
+  const dueW = shifts.filter(s => !s.workerPaid).reduce((a, s) => a + num(s.wage), 0);
+  const totalHours = shifts.reduce((a, s) => a + hoursOf(s), 0);
+
+  let monthOpts = '<option value="current"' + (ui.ledgerMonth === 'current' ? ' selected' : '') + '>이번 달 (' + todayISO().slice(0, 7) + ')</option>';
+  monthOpts += months.map(m => '<option value="' + m + '"' + (ui.ledgerMonth === m ? ' selected' : '') + '>' +
+    m.slice(0, 4) + '년 ' + Number(m.slice(5, 7)) + '월</option>').join('');
+  monthOpts += '<option value="all"' + (ui.ledgerMonth === 'all' ? ' selected' : '') + '>전체 기간</option>';
+
+  const byClient = {};
+  shifts.forEach(s => {
+    const key = (s.clientId && s.clientId !== '__custom') ? s.clientId : ('x:' + (s.place || '직접 입력'));
+    if (!byClient[key]) byClient[key] = {
+      id: s.clientId || '', name: (clientById(s.clientId) || {}).name || s.place || '직접 입력', rows: []
+    };
+    byClient[key].rows.push(s);
+  });
+  const clientRows = Object.keys(byClient).map(k => {
+    const g = byClient[k];
+    const billed = g.rows.reduce((a, s) => a + billAmount(s), 0);
+    const paid = g.rows.filter(s => s.clientPaid).reduce((a, s) => a + billAmount(s), 0);
+    const unpaid = g.rows.filter(s => !s.clientPaid);
+    return { key: k, id: g.id, name: g.name, billed: billed, paid: paid, due: billed - paid, unpaid: unpaid, n: g.rows.length };
+  }).sort((a, b) => b.due - a.due || b.billed - a.billed);
+
+  const clientHTML = clientRows.length ? clientRows.map(r => {
+    const rate = clientRate(r.id);
+    const unpaidIds = r.unpaid.map(s => s.id).join(',');
+    return '<div class="card" style="margin-bottom:8px;padding:12px 14px">' +
+      '<div class="rec-top"><div class="rec-who" style="font-size:13.5px">' + esc(r.name) +
+        ' <span class="badge cnt">' + r.n + '건</span></div>' +
+        '<div class="rec-amt">' + won(r.billed) + '<small>청구</small></div></div>' +
+      '<div class="rec-meta">입금 ' + won(r.paid) + ' · <b style="color:' + (r.due > 0 ? '#c2410c' : '#15803d') + '">미수금 ' + won(r.due) + '</b></div>' +
+      '<div class="row2" style="margin-top:8px;gap:6px">' +
+        (r.unpaid.length ? '<button class="mini ok" data-act="ledger-pay-client" data-ids="' + unpaidIds + '">입금 완료</button>' : '<span class="muted" style="font-size:11.5px;align-self:center">입금 완료</span>') +
+        (r.unpaid.length ? '<button class="mini" data-act="ledger-bill" data-ids="' + unpaidIds + '">계좌 문자</button>' : '') +
+      '</div>' +
+      (r.id && r.id !== '__custom' ? '<label class="f" style="margin-top:8px"><span style="font-size:11px">청구 시급 (이 기기 기준 · 비우면 근무 급여와 같음)</span>' +
+        '<input type="number" step="1000" min="0" data-lrate="' + esc(r.id) + '" value="' + (rate ? rate : '') + '" placeholder="예: 60000"></label>' : '') +
+      '</div>';
+  }).join('') : '<div class="card muted" style="font-size:12.5px">이 기간에 근무 기록이 없습니다.</div>';
+
+  const byWorker = {};
+  shifts.forEach(s => {
+    const key = s.workerId || ('x:' + (s.workerName || ''));
+    if (!byWorker[key]) byWorker[key] = {
+      id: s.workerId || '', name: (workerById(s.workerId) || {}).name || s.workerName || '삭제된 인력', rows: []
+    };
+    byWorker[key].rows.push(s);
+  });
+  const workerRows = Object.keys(byWorker).map(k => {
+    const g = byWorker[k];
+    const pay = g.rows.reduce((a, s) => a + num(s.wage), 0);
+    const paid = g.rows.filter(s => s.workerPaid).reduce((a, s) => a + num(s.wage), 0);
+    const unpaid = g.rows.filter(s => !s.workerPaid);
+    return { key: k, name: g.name, hours: g.rows.reduce((a, s) => a + hoursOf(s), 0), pay: pay, paid: paid, due: pay - paid, unpaid: unpaid, n: g.rows.length };
+  }).sort((a, b) => b.due - a.due || b.pay - a.pay);
+
+  const workerHTML = workerRows.length ? workerRows.map(r => {
+    const unpaidIds = r.unpaid.map(s => s.id).join(',');
+    return '<div class="card" style="margin-bottom:8px;padding:12px 14px">' +
+      '<div class="rec-top"><div class="rec-who" style="font-size:13.5px">' + esc(r.name) +
+        ' <span class="badge cnt">' + r.n + '건</span></div>' +
+        '<div class="rec-amt">' + won(r.pay) + '<small>일당 ' + r.hours + '시간</small></div></div>' +
+      '<div class="rec-meta">지급 ' + won(r.paid) + ' · <b style="color:' + (r.due > 0 ? '#c2410c' : '#15803d') + '">미지급 ' + won(r.due) + '</b></div>' +
+      (r.unpaid.length ? '<div class="row2" style="margin-top:8px;gap:6px">' +
+        '<button class="mini ok" data-act="ledger-pay-worker" data-ids="' + unpaidIds + '">지급 완료</button></div>' : '') +
+      '</div>';
+  }).join('') : '<div class="card muted" style="font-size:12.5px">이 기간에 근무 기록이 없습니다.</div>';
+
+  const expHTML = (exps.length ? exps.map(e =>
+    '<div class="card" style="margin-bottom:6px;padding:10px 12px">' +
+      '<div class="rec-top"><div class="rec-who" style="font-size:13px">' + esc(e.category || '지출') +
+        ' <span class="badge cnt">' + esc(fmtDate(e.date)) + '</span></div>' +
+        '<div class="rec-amt">' + won(e.amount) + '</div></div>' +
+      (e.memo ? '<div class="rec-memo">' + esc(e.memo) + '</div>' : '') +
+      '<div class="rec-foot"><span class="rec-by">' + esc(aName(e.createdBy)) + '</span>' +
+        '<span class="rec-acts">' +
+          '<button class="mini" data-act="edit-expense" data-id="' + e.id + '">수정</button>' +
+          '<button class="mini danger" data-act="del-expense" data-id="' + e.id + '">삭제</button>' +
+        '</span></div>' +
+    '</div>').join('')
+    : '<div class="card muted" style="font-size:12.5px">이 기간에 기록한 지출이 없습니다.</div>');
+
+  return '' +
+  '<div class="sumbar">' +
+    '<div class="sumcell"><div class="k">📒 장부</div>' +
+      '<div class="v" style="font-size:20px">' + won(net) + '</div>' +
+      '<div class="n">순수익 = 매출 ' + won(rev) + ' − 인건비 ' + won(labor) + ' − 지출 ' + won(spend) + '</div></div>' +
+    '<div class="sumcell in wait"><div class="k">🏢 미수금</div><div class="v">' + won(dueC) + '</div>' +
+      '<div class="n">거래처 입금 대기</div></div>' +
+    '<div class="sumcell out wait"><div class="k">👷 미지급</div><div class="v">' + won(dueW) + '</div>' +
+      '<div class="n">인력 지급 대기</div></div>' +
+  '</div>' +
+
+  '<div class="row2" style="margin:10px 0 4px;gap:8px">' +
+    '<label class="f" style="margin:0"><span>기간</span><select id="ledgerMonth">' + monthOpts + '</select></label>' +
+    '<button class="btn ghost" data-act="add-expense" style="align-self:end;height:42px">＋ 지출 추가</button>' +
+  '</div>' +
+
+  '<h2 class="sec">이 기간 요약</h2>' +
+  '<div class="grid2">' +
+    '<div class="stat"><span class="stat-k">🏢 총 매출 (거래처 청구)</span><span class="stat-v sm money-in">' + won(rev) + '</span><span class="stat-s in">' + shifts.length + '건 · ' + totalHours + '시간</span></div>' +
+    '<div class="stat"><span class="stat-k">👷 총 인건비 (인력 지급)</span><span class="stat-v sm money-out">' + won(labor) + '</span><span class="stat-s money">' + shifts.length + '건</span></div>' +
+    '<div class="stat"><span class="stat-k">🧾 일일 지출 합계</span><span class="stat-v sm">' + won(spend) + '</span><span class="stat-s">' + exps.length + '건</span></div>' +
+    '<div class="stat"><span class="stat-k">💰 실제 순수익</span><span class="stat-v sm ' + (net >= 0 ? 'money-in' : 'money-out') + '">' + won(net) + '</span><span class="stat-s">매출 − 인건비 − 지출</span></div>' +
+  '</div>' +
+  '<p class="form-note">거래처 <b>청구 시급</b>을 넣으면 매출과 인건비 차이가 순수익에 잡힙니다. 비워 두면 근무 급여를 그대로 청구한 것으로 봅니다.</p>' +
+
+  '<h2 class="sec">거래처별 장부</h2>' + clientHTML +
+
+  '<h2 class="sec">인력별 장부</h2>' + workerHTML +
+
+  '<h2 class="sec">일일 지출 <span class="muted" style="font-size:12px;font-weight:700">' + won(spend) + '</span></h2>' + expHTML +
+  '<p class="foot">지출은 일자별로 기록해 그 달 순수익에 반영됩니다.</p>';
+}
+
+function openExpenseModal(id){
+  const e = id ? (DB.expenses || []).find(x => x.id === id) : null;
+  const cats = EXPENSE_CATS.slice();
+  if (e && e.category && cats.indexOf(e.category) < 0) cats.push(e.category);
+  const body =
+    '<label class="f"><span>날짜</span><input type="date" id="exDate" value="' + esc(e ? e.date : todayISO()) + '"></label>' +
+    '<label class="f"><span>항목</span><select id="exCat">' + cats.map(c =>
+      '<option' + (e && e.category === c ? ' selected' : '') + '>' + esc(c) + '</option>').join('') + '</select></label>' +
+    '<label class="f"><span>금액(원)</span><input type="number" id="exAmount" step="1000" min="0" value="' + (e ? num(e.amount) : '') + '" placeholder="예: 45000"></label>' +
+    '<label class="f"><span>메모</span><input type="text" id="exMemo" value="' + esc(e ? e.memo || '' : '') + '" placeholder="예: 표선 현장 점심 4명"></label>';
+  openModal({
+    title: e ? '지출 수정' : '지출 추가',
+    sub: '일일 지출을 기록하면 그 달 순수익에 반영됩니다',
+    body,
+    submitLabel: e ? '수정 저장' : '추가',
+    onSubmit: (wrap, close) => {
+      const date = $('#exDate', wrap).value;
+      const amount = num($('#exAmount', wrap).value);
+      if (!date){ toast('날짜를 선택해 주세요'); return; }
+      if (!(amount > 0)){ toast('금액을 입력해 주세요'); return; }
+      const rec = e || { id: uid(), createdAt: new Date().toISOString(), createdBy: curAdmin().id };
+      rec.date = date;
+      rec.category = $('#exCat', wrap).value;
+      rec.amount = Math.round(amount);
+      rec.memo = $('#exMemo', wrap).value.trim();
+      if (!e) DB.expenses.push(rec);
+      saveDB();
+      syncExpense(rec);
+      close();
+      render();
+      toast(e ? '지출을 수정했습니다' : '지출을 추가했습니다 (' + won(rec.amount) + ')');
+    }
+  });
+}
+
 /* ---------- 설정 ---------- */
 function openSettings(){
   const counts = SYNC.counts || {};
@@ -4235,6 +4549,7 @@ document.addEventListener('click', ev => {
 
   switch (act){
     case 'tab':
+      if (el.dataset.tab !== ui.tab) navPush({ tab: el.dataset.tab });
       ui.tab = el.dataset.tab;
       render();
       break;
@@ -4270,6 +4585,57 @@ document.addEventListener('click', ev => {
     case 'billing-sms':
       openBillingSms(el.dataset.id || el.dataset.ids);
       break;
+
+    case 'ledger-bill':
+      openBillingSms(el.dataset.ids);
+      break;
+
+    case 'ledger-pay-client': {
+      const ids = String(el.dataset.ids || '').split(',').filter(Boolean);
+      const me = curAdmin();
+      let n = 0;
+      ids.forEach(x => {
+        const sh = DB.shifts.find(v => v.id === x);
+        if (sh && !sh.clientPaid){ syncPay(sh, 'clientPaid', true, me); syncShift(sh); n++; }
+      });
+      saveDB(); render();
+      toast(n + '건 거래처 입금 완료 처리');
+      break;
+    }
+
+    case 'ledger-pay-worker': {
+      const ids = String(el.dataset.ids || '').split(',').filter(Boolean);
+      const me = curAdmin();
+      let n = 0;
+      ids.forEach(x => {
+        const sh = DB.shifts.find(v => v.id === x);
+        if (sh && !sh.workerPaid){ syncPay(sh, 'workerPaid', true, me); syncShift(sh); n++; }
+      });
+      saveDB(); render();
+      toast(n + '건 인력 지급 완료 처리');
+      break;
+    }
+
+    case 'add-expense':
+      openExpenseModal(null);
+      break;
+
+    case 'edit-expense':
+      openExpenseModal(id);
+      break;
+
+    case 'del-expense': {
+      const ex = (DB.expenses || []).find(x => x.id === id);
+      if (!ex) break;
+      confirmModal('지출 삭제', ex.date + ' · ' + (ex.category || '지출') + ' · ' + won(ex.amount) + ' 기록을 지웁니다. 삭제하면 되돌릴 수 없습니다.',
+        '삭제', () => {
+          DB.expenses = (DB.expenses || []).filter(x => x.id !== id);
+          dbDelete('expenses', id);
+          saveDB(); render();
+          toast('지출을 삭제했습니다');
+        });
+      break;
+    }
 
     case 'save-account': {
       const acc = saveBillingAccount({
@@ -4452,6 +4818,17 @@ document.addEventListener('input', ev => {
 document.addEventListener('change', ev => {
   const t = ev.target;
 
+  if (t.id === 'ledgerMonth'){
+    ui.ledgerMonth = t.value;
+    render();
+    return;
+  }
+  if (t.dataset && t.dataset.lrate){
+    setClientRate(t.dataset.lrate, t.value);
+    render();
+    toast(t.value ? '청구 시급을 ' + won(t.value) + '으로 저장했습니다' : '청구 시급을 지웠습니다 (근무 급여와 같음)');
+    return;
+  }
   if (t.id === 'shiftWorkerFilter'){
     ui.shiftWorker = t.value;
     render();
@@ -4485,8 +4862,7 @@ document.addEventListener('change', ev => {
 
 document.addEventListener('keydown', ev => {
   if (ev.key === 'Escape'){
-    const w = document.querySelector('.modal-wrap');
-    if (w){ w.remove(); document.body.style.overflow = ''; }
+    closeTopModalFromUi();
   }
 });
 

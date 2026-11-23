@@ -63,6 +63,16 @@ create table if not exists public.wf_sms (
   created_at timestamptz default now()
 );
 
+create table if not exists public.wf_expenses (
+  id text primary key,
+  date text,
+  category text,
+  amount integer,
+  memo text,
+  created_by text,
+  created_at timestamptz default now()
+);
+
 create table if not exists public.wf_messages (
   id text primary key,
   sender text,
@@ -78,7 +88,7 @@ do $$
 declare
   t text;
 begin
-  foreach t in array array['wf_workers', 'wf_clients', 'wf_logs', 'wf_sms', 'wf_messages']
+  foreach t in array array['wf_workers', 'wf_clients', 'wf_logs', 'wf_sms', 'wf_messages', 'wf_expenses']
   loop
     if not exists (
       select 1 from pg_publication_tables
@@ -98,6 +108,7 @@ alter table public.wf_clients  enable row level security;
 alter table public.wf_logs     enable row level security;
 alter table public.wf_sms      enable row level security;
 alter table public.wf_messages enable row level security;
+alter table public.wf_expenses enable row level security;
 
 drop policy if exists wf_anon_all on public.wf_workers;
 create policy wf_anon_all on public.wf_workers  for all to anon, authenticated using (true) with check (true);
@@ -114,6 +125,9 @@ create policy wf_anon_all on public.wf_sms      for all to anon, authenticated u
 drop policy if exists wf_anon_all on public.wf_messages;
 create policy wf_anon_all on public.wf_messages for all to anon, authenticated using (true) with check (true);
 
+drop policy if exists wf_anon_all on public.wf_expenses;
+create policy wf_anon_all on public.wf_expenses for all to anon, authenticated using (true) with check (true);
+
 grant select, insert, update, delete on
-  public.wf_workers, public.wf_clients, public.wf_logs, public.wf_sms, public.wf_messages
+  public.wf_workers, public.wf_clients, public.wf_logs, public.wf_sms, public.wf_messages, public.wf_expenses
   to anon, authenticated;
