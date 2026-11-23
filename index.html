@@ -772,7 +772,8 @@ grant select, insert, update, delete on
 /* ============================================================
    유틸
    ============================================================ */
-const LS_KEY = 'wfp_v4';
+const LS_KEY = 'wfp_v5';
+const LS_KEY_V4 = 'wfp_v4';
 const LS_KEY_V3 = 'wfp_v3';
 const LS_KEY_V2 = 'wfp_v2';
 const LS_KEY_V1 = 'wfp_v1';
@@ -1088,6 +1089,14 @@ function loadDB(){
       if (looksLikeDB(parsed)) return finish(parsed);
     }
   }catch(e){ /* 손상된 저장값은 새로 만든다 */ }
+
+  /* v4 → v5: 인력·거래처까지 이 기기에 남은 기록을 한 번에 비운다 (원격 DB를 빈 상태로 정리한 것과 맞춤) */
+  try{
+    if (localStorage.getItem(LS_KEY_V4) !== null){
+      [LS_KEY_V4, LS_KEY_V3, LS_KEY_V2, LS_KEY_V1].forEach(k => { try{ localStorage.removeItem(k); }catch(e){} });
+      return finish(seedData());
+    }
+  }catch(e){ /* v4 저장값을 못 지우면 아래 이전 버전 이관 경로로 */ }
 
   try{
     const raw3 = localStorage.getItem(LS_KEY_V3);
@@ -4527,11 +4536,12 @@ function setClientRate(id, v){
   try { localStorage.setItem(CLIENT_RATE_KEY, JSON.stringify(m)); } catch(e){}
 }
 function monthKeyOf(x){ return String((x && x.date) || '').slice(0, 7); }
-/* 거래처 청구액: 청구 시급이 있으면 시간 × 청구 시급, 없으면 근무 급여. 수당은 그대로 더한다 */
+/* 거래처 청구액: 청구 시급이 있으면 시간 × 청구 시급, 없으면 수당을 뺀 근무 급여.
+   추가 수당은 인력 정산(인건비)·순수익의 비용 쪽에만 들어가고 거래처 청구액에는 넣지 않는다 */
 function billAmount(s){
   const cr = clientRate(s.clientId);
-  if (cr > 0) return Math.round(hoursOf(s) * cr) + allowanceOf(s);
-  return num(s.wage);
+  if (cr > 0) return Math.round(hoursOf(s) * cr);
+  return basePayOf(s);
 }
 function ledgerMonths(){
   const set = {};
@@ -4597,7 +4607,7 @@ function viewLedger(){
         (r.unpaid.length ? '<button class="mini ok" data-act="ledger-pay-client" data-ids="' + unpaidIds + '">입금 완료</button>' : '<span class="muted" style="font-size:11.5px;align-self:center">입금 완료</span>') +
         (r.unpaid.length ? '<button class="mini" data-act="ledger-bill" data-ids="' + unpaidIds + '">계좌 문자</button>' : '') +
       '</div>' +
-      (r.id && r.id !== '__custom' ? '<label class="f" style="margin-top:8px"><span style="font-size:11px">청구 시급 (이 기기 기준 · 비우면 근무 급여와 같음)</span>' +
+      (r.id && r.id !== '__custom' ? '<label class="f" style="margin-top:8px"><span style="font-size:11px">청구 시급 (이 기기 기준 · 비우면 수당 뺀 근무 급여)</span>' +
         '<input type="number" step="1000" min="0" data-lrate="' + esc(r.id) + '" value="' + (rate ? rate : '') + '" placeholder="예: 60000"></label>' : '') +
       '</div>';
   }).join('') : '<div class="card muted" style="font-size:12.5px">이 기간에 근무 기록이 없습니다.</div>';
@@ -4669,7 +4679,7 @@ function viewLedger(){
     '<div class="stat"><span class="stat-k">🧾 일일 지출 합계</span><span class="stat-v sm">' + won(spend) + '</span><span class="stat-s">' + exps.length + '건</span></div>' +
     '<div class="stat"><span class="stat-k">💰 실제 순수익</span><span class="stat-v sm ' + (net >= 0 ? 'money-in' : 'money-out') + '">' + won(net) + '</span><span class="stat-s">매출 − 인건비 − 지출</span></div>' +
   '</div>' +
-  '<p class="form-note">거래처 <b>청구 시급</b>을 넣으면 매출과 인건비 차이가 순수익에 잡힙니다. 비워 두면 근무 급여를 그대로 청구한 것으로 봅니다.</p>' +
+  '<p class="form-note">거래처 <b>청구 시급</b>을 넣으면 매출과 인건비 차이가 순수익에 잡힙니다. 청구액은 <b>근무시간 × 청구 시급</b>으로만 계산하고, 추가 수당은 넣지 않습니다(인건비에만 포함). 청구 시급을 비우면 수당을 뺀 근무 급여를 청구한 것으로 봅니다.</p>' +
 
   '<h2 class="sec">거래처별 장부</h2>' + clientHTML +
 
@@ -5143,7 +5153,7 @@ document.addEventListener('change', ev => {
   if (t.dataset && t.dataset.lrate){
     setClientRate(t.dataset.lrate, t.value);
     render();
-    toast(t.value ? '청구 시급을 ' + won(t.value) + '으로 저장했습니다' : '청구 시급을 지웠습니다 (근무 급여와 같음)');
+    toast(t.value ? '청구 시급을 ' + won(t.value) + '으로 저장했습니다' : '청구 시급을 지웠습니다 (수당 뺀 근무 급여와 같음)');
     return;
   }
   if (t.id === 'shiftWorkerFilter'){
