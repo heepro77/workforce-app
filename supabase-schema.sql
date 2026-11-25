@@ -12,11 +12,15 @@ create table if not exists public.wf_workers (
   hourly_rate integer,
   bank text,
   age integer,
+  age_group text,
   personality text,
   looks text,
   memo text,
   created_at timestamptz default now()
 );
+
+-- 인력 연령대 구분 (20대 · 생초 · 어생 · 생점 · 젊초 · 젊은점)
+alter table public.wf_workers add column if not exists age_group text;
 
 create table if not exists public.wf_clients (
   id text primary key,
