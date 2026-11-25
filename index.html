@@ -105,6 +105,20 @@
   .switch:active{transform:scale(.96)}
   .roster-empty{padding:16px;font-size:12.5px;color:var(--muted)}
 
+  /* ---------- 출근 버튼 (ON/OFF 와 별개로 '왔는지'만 표시) ---------- */
+  .roster-acts{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}
+  .att-btn{
+    display:inline-flex;align-items:center;gap:4px;border-radius:9px;border:1px solid #cbd5e1;background:#fff;
+    color:#475569;font-size:11.5px;font-weight:800;font-family:inherit;padding:5px 9px;cursor:pointer;letter-spacing:-.2px
+  }
+  .att-btn:before{content:"○";font-size:10px;line-height:1}
+  .att-btn.on{background:#1c43c9;border-color:#1c43c9;color:#fff;box-shadow:0 3px 9px rgba(28,67,201,.28)}
+  .att-btn.on:before{content:"✓";font-size:11px}
+  .att-btn:active{transform:scale(.96)}
+  .roster-att{display:flex;align-items:center;flex-wrap:wrap;gap:5px;margin-top:4px;font-size:11px;font-weight:700;color:#1c43c9}
+  .roster-att .by-badge{font-size:10px}
+  .badge.att{background:#eaf0ff;color:#1c43c9}
+
   /* ---------- stats ---------- */
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
   .stat{
@@ -782,11 +796,20 @@ create table if not exists public.wf_workers (
   personality text,
   looks text,
   memo text,
+  attend_day text,
+  attend_at text,
+  attend_by text,
   created_at timestamptz default now()
 );
 
 -- 인력 연령대 구분 (20대 · 생초 · 어생 · 생점 · 젊초 · 젊은점)
 alter table public.wf_workers add column if not exists age_group text;
+
+-- 오늘 출근 버튼 (하루 기준일은 앱의 '오늘 출역'과 같이 낮 12시에 바뀐다)
+-- attend_day 가 오늘 기준일과 같으면 출근으로 보고, 관리자 3명 기기끼리 이 칸으로 공유한다.
+alter table public.wf_workers add column if not exists attend_day text;
+alter table public.wf_workers add column if not exists attend_at text;
+alter table public.wf_workers add column if not exists attend_by text;
 
 create table if not exists public.wf_clients (
   id text primary key,
@@ -1295,6 +1318,9 @@ function normalizeDB(db){
     if (w.age === undefined) w.age = null;
     if (w.personality === undefined) w.personality = '';
     if (w.looks === undefined) w.looks = '';
+    if (w.attendDay === undefined || w.attendDay === null) w.attendDay = '';
+    if (w.attendAt === undefined) w.attendAt = null;
+    if (w.attendBy === undefined || w.attendBy === null) w.attendBy = '';
     return w;
   });
   db.shifts = db.shifts.map(s => {
@@ -1421,7 +1447,7 @@ const TABLE_LIST = ['workers', 'clients', 'logs', 'sms', 'chat', 'expenses'];
 const TABLE_LABEL = { workers: 'wf_workers (인력)', clients: 'wf_clients (거래처)', logs: 'wf_logs (근무·입금)', sms: 'wf_sms (문자)', chat: 'wf_messages (메신저)', expenses: 'wf_expenses (지출)' };
 const CORE_TABLES = ['workers', 'clients', 'logs', 'sms', 'chat'];   /* 지출 표가 없어도 실시간 연결은 유지 */
 const CHAT_TAGS = ['', '현장', '근무', '정산', '공지'];
-const COL_LABEL = { allowance: '수당', allowance_memo: '수당 사유', age_group: '연령대' };
+const COL_LABEL = { allowance: '수당', allowance_memo: '수당 사유', age_group: '연령대', attend_day: '출근 날짜', attend_at: '출근 시각', attend_by: '출근 기록자' };
 const warnedCols = {};
 const SEEN_PREFIX = 'wfs_chat_seen_';
 const ADMIN_DEFAULTS = [
@@ -1476,6 +1502,9 @@ function rowWorker(r){
     personality: r.personality || '',
     looks: r.looks || '',
     memo: r.memo || '',
+    attendDay: r.attend_day || '',
+    attendAt: r.attend_at || null,
+    attendBy: r.attend_by || '',
     createdAt: r.created_at || null
   };
 }
@@ -1492,6 +1521,9 @@ function colWorker(w){
     personality: w.personality || '',
     looks: w.looks || '',
     memo: w.memo || '',
+    attend_day: w.attendDay || '',
+    attend_at: w.attendAt || null,
+    attend_by: w.attendBy || '',
     created_at: w.createdAt || new Date().toISOString()
   };
 }
@@ -2860,7 +2892,11 @@ function viewHome(){
   const offN = Math.max(0, DB.workers.length - busyN);
   const workerHasToday = w => todays.some(s => s.workerId === w.id);
   const workerIsOn = w => todays.some(s => s.workerId === w.id && isOpenShift(s));
-  const rosterRank = w => workerIsOn(w) ? 0 : (workerHasToday(w) ? 1 : 2);
+  /* 출근: 오늘 기준일로 '출근' 버튼을 누른 인력 (ON 이면 누르지 않아도 출근으로 본다) */
+  const workerAtt = w => attendInfoOf(w, today, todays.filter(s => s.workerId === w.id));
+  const workerAttended = w => !!workerAtt(w);
+  const attN = DB.workers.filter(workerAttended).length;
+  const rosterRank = w => workerIsOn(w) ? 0 : (workerAttended(w) ? 1 : 2);
 
   /* 연령대별 인원 (출역 화면 상단 칩·필터) */
   const ageCount = {};
@@ -2873,7 +2909,7 @@ function viewHome(){
   const rosterWorkers = DB.workers
     .filter(w => todayAge === 'all' || (ageGroupKey(w) || '_none') === todayAge)
     .filter(w => {
-      if (todayStatus === 'att') return workerHasToday(w);
+      if (todayStatus === 'att') return workerAttended(w);
       if (todayStatus === 'on') return workerIsOn(w);
       if (todayStatus === 'off') return !workerIsOn(w);
       return true;
@@ -2886,13 +2922,16 @@ function viewHome(){
     const open = rows.filter(isOpenShift)[0];
     const done = rows.filter(s => !isOpenShift(s));
     const on = !!open;
+    const att = attendInfoOf(w, today, rows);
     const sumWageW = rows.reduce((a, s) => a + num(s.wage), 0);
     const sumMin = rows.reduce((a, s) => a + Math.round(num(hoursOf(s)) * 60), 0);
     const sub = open
       ? 'ON ' + onHM(open) + ' · 근무중' + (openMinutes(open) >= 1 ? ' ' + elapsedLabel(openMinutes(open)) + ' 경과' : '') + (open.place ? ' · ' + open.place : '')
       : (done.length
           ? '오늘 ' + done.length + '건 · ' + durLabel(sumMin) + (sumWageW ? ' · 일당 ' + won(sumWageW) : '')
-          : (w.status === RESERVE ? '예비 인력 · 오늘 미출역' : '오늘 미출역'));
+          : (att
+              ? '출근 완료 · 근무 기록 없음'
+              : (w.status === RESERVE ? '예비 인력 · 오늘 미출역' : '오늘 미출역')));
 
     /* 완료된 건들을 1차·2차… 로 차곡차곡 */
     const doneList = done.length
@@ -2912,13 +2951,28 @@ function viewHome(){
           '</div>').join('') + '</div>'
       : '';
 
+    const attLine = att
+      ? '<div class="roster-att">' +
+          '<span class="badge att">출근 완료</span>' +
+          (att.at ? '<span>' + esc(hmOf(att.at)) + '</span>' : '') +
+          (att.by ? byBadge(att.by, '출근') : '') +
+        '</div>'
+      : '';
+    const attBtn = '<button class="att-btn' + (att ? ' on' : '') + '" data-act="today-attend" data-worker="' + w.id + '"' +
+      ' aria-pressed="' + (att ? 'true' : 'false') + '" aria-label="' + esc(w.name) + ' 출근 ' + (att ? '완료 · 다시 누르면 해제' : '체크') + '">' +
+      (att ? '출근 완료' : '출근') + '</button>';
+
     return '<div class="roster-item' + (on ? ' on' : '') + '" data-age="' + esc(ageGroupKey(w)) + '">' +
       '<div class="roster-row' + (on ? ' on' : '') + '">' +
         '<div class="roster-id"><div class="roster-name"><b>' + esc(w.name) + '</b>' + ageGroupBadge(w, { none: true }) + '</div>' +
           '<span class="roster-sub">' + esc(sub) + '</span>' +
-          (open ? '<div class="roster-by">' + byBadge(open.createdBy) + '</div>' : '') + '</div>' +
-        (open ? '<button class="mini" data-act="today-edit" data-id="' + open.id + '">시간·거래처</button>' : '') +
-        (open ? '<button class="mini danger" data-act="del-shift" data-id="' + open.id + '">삭제</button>' : '') +
+          attLine +
+          (open ? '<div class="roster-by">' + byBadge(open.createdBy) + '</div>' : '') +
+          '<div class="roster-acts">' + attBtn +
+            (open ? '<button class="mini" data-act="today-edit" data-id="' + open.id + '">시간·거래처</button>' : '') +
+            (open ? '<button class="mini danger" data-act="del-shift" data-id="' + open.id + '">삭제</button>' : '') +
+          '</div>' +
+        '</div>' +
         '<button class="switch' + (on ? ' on' : '') + '" data-act="today-toggle" data-worker="' + w.id + '" aria-pressed="' + (on ? 'true' : 'false') + '" aria-label="' + esc(w.name) + ' 오늘 출역 ' + (on ? 'ON' : 'OFF') + '">' + (on ? 'ON' : 'OFF') + '</button>' +
       '</div>' +
       doneList +
@@ -2957,7 +3011,7 @@ function viewHome(){
   const todayBoard = DB.workers.length
     ? '<div class="today-board">' +
         boardCell('all', DB.workers.length, '전체 인원', 'all') +
-        boardCell('att', onN, '출근', 'att') +
+        boardCell('att', attN, '출근', 'att') +
         boardCell('on', busyN, 'ON', 'on') +
         boardCell('off', offN, 'OFF', 'off') +
       '</div>'
@@ -2968,7 +3022,7 @@ function viewHome(){
       (busyN ? ' · 근무중 ' + busyN + '명' : '') + '</span></h2>' +
       ageChips +
       '<div class="roster">' + (rosterParts.length ? rosterParts.join('') : '<div class="roster-empty">조건에 맞는 인력이 없습니다 · 위 필터를 바꿔 보세요.</div>') + '</div>' +
-      '<p class="form-note">ON을 누르면 확인창이 뜨고, 확인한 순간의 시각이 시작으로 기록됩니다 · OFF를 누르면 그 순간의 시각이 종료 · 하루에 여러 번 가능</p>'
+      '<p class="form-note">출근을 누르면 오늘 출근으로 표시되고, 다시 누르면 해제됩니다 · ON을 누르면 확인한 순간의 시각으로 시작되고 출근도 함께 체크됩니다 · OFF는 그 순간의 시각이 종료로 기록됩니다</p>'
     : '<div class="card muted" style="font-size:12.5px">등록된 인력이 없습니다. <b>인력</b> 탭에서 먼저 추가하세요.</div>';
 
   const msgBits = msgs.length ? msgs.map(m => {
@@ -2984,8 +3038,8 @@ function viewHome(){
   '<section class="hero">' +
     '<div class="hero-top"><span>오늘 출역</span><span>' + fmtDate(today) + '</span></div>' +
     '<div class="hero-cap">낮 12시에 새 출역으로 리셋 · 기준 ' + esc(today) + '</div>' +
-    '<div class="hero-num">' + onN + '<small>명 출근</small></div>' +
-    '<div class="hero-sub">출근 ' + onN + '명 · <b>ON</b> ' + busyN + '명 · <b>OFF</b> ' + offN + '명</div>' +
+    '<div class="hero-num">' + attN + '<small>명 출근</small></div>' +
+    '<div class="hero-sub">출근 ' + attN + '명 · <b>ON</b> ' + busyN + '명 · <b>OFF</b> ' + offN + '명</div>' +
     todayBoard +
     '<div class="hero-list">' + todayPills + '</div>' +
     '<div class="hero-acts">' +
@@ -4019,6 +4073,65 @@ function openShiftModal(id){
 }
 
 /* ============================================================
+   출근 체크 — ON/OFF 와 따로, '오늘 왔는지'만 남긴다.
+   · 기록은 인력 한 명에 하루치만 둔다 (attendDay = 오늘 기준일, attendAt = 누른 시각, attendBy = 누른 관리자)
+   · 기준일은 '오늘 출역'과 같이 낮 12시에 바뀌므로, 날이 바뀌면 저절로 미출근 상태가 된다
+   · DB(wf_workers) 의 attend_day · attend_at · attend_by 칸으로 관리자 3명 기기에 함께 반영된다
+   ============================================================ */
+function attendInfoOf(w, day, rows){
+  if (!w) return null;
+  const today = day || dispatchDateKey();
+  if (String(w.attendDay || '') === today){
+    return { at: w.attendAt || '', by: w.attendBy || '', auto: false };
+  }
+  /* 출근 버튼이 생기기 전에 켠 ON 건도 근무중이면 출근으로 본다 */
+  const open = (rows || todayRows(w.id)).filter(isOpenShift)[0];
+  if (open) return { at: open.onAt || '', by: open.createdBy || '', auto: true };
+  return null;
+}
+function markAttend(w, when, silent){
+  if (!w) return '';
+  const now = (when instanceof Date && !isNaN(when)) ? when : new Date();
+  const day = dispatchDateKey(now);
+  w.attendDay = day;
+  w.attendAt = now.toISOString();
+  w.attendBy = curAdmin().id;
+  saveDB();
+  syncWorker(w);
+  if (!silent){
+    render();
+    toast(w.name + ' 님 출근 완료 · ' + hmOf(now));
+  }
+  return day;
+}
+function clearAttend(w, silent){
+  if (!w) return;
+  w.attendDay = '';
+  w.attendAt = null;
+  w.attendBy = '';
+  saveDB();
+  syncWorker(w);
+  if (!silent){
+    render();
+    toast(w.name + ' 님 출근을 해제했습니다');
+  }
+}
+function toggleAttend(workerId){
+  const w = workerById(workerId);
+  if (!w) return;
+  const today = dispatchDateKey();
+  if (String(w.attendDay || '') === today){
+    if (openRowsOf(w.id).length){
+      toast(w.name + ' 님은 ON(근무중)이라 출근이 유지됩니다 · OFF 후 해제할 수 있습니다');
+      return;
+    }
+    clearAttend(w);
+    return;
+  }
+  markAttend(w);
+}
+
+/* ============================================================
    오늘 출역 체크 · 근무시간 바로 등록/수정
    ON/OFF 를 누른 순간의 현재 시각을 그대로 기록한다.
    · OFF → ON  : 지금 시각을 시작으로 새 출역 건을 만든다 (하루에 몇 번이든 반복 가능)
@@ -4093,12 +4206,16 @@ function startShiftNow(w, when){
     offAt: null
   };
   closeStaleOpen(w, rec.date);
+  /* ON 을 누르면 출근도 함께 체크한다 (이미 출근이면 그대로) */
+  const wasAttended = String(w.attendDay || '') === rec.date;
+  if (!wasAttended) markAttend(w, now, true);
   DB.shifts.push(rec);
   saveDB();
   syncShift(rec);
   render();
   const mine = DB.shifts.filter(s => s.workerId === w.id && s.date === rec.date);
-  toast(w.name + ' 님 ' + (mine.length > 1 ? mine.length + '차 ' : '') + 'ON ' + rec.start + ' 기록');
+  toast(w.name + ' 님 ' + (mine.length > 1 ? mine.length + '차 ' : '') + 'ON ' + rec.start + ' 기록' +
+    (wasAttended ? '' : ' · 출근도 함께 체크했습니다'));
   return rec;
 }
 
@@ -5882,6 +5999,10 @@ document.addEventListener('click', ev => {
 
     case 'today-toggle':
       toggleTodayShift(el.dataset.worker);
+      break;
+
+    case 'today-attend':
+      toggleAttend(el.dataset.worker);
       break;
 
     case 'billing-sms':

@@ -16,11 +16,20 @@ create table if not exists public.wf_workers (
   personality text,
   looks text,
   memo text,
+  attend_day text,
+  attend_at text,
+  attend_by text,
   created_at timestamptz default now()
 );
 
 -- 인력 연령대 구분 (20대 · 생초 · 어생 · 생점 · 젊초 · 젊은점)
 alter table public.wf_workers add column if not exists age_group text;
+
+-- 오늘 출근 버튼 (하루 기준일은 앱의 '오늘 출역'과 같이 낮 12시에 바뀐다)
+-- attend_day 가 오늘 기준일과 같으면 출근으로 보고, 관리자 3명 기기끼리 이 칸으로 공유한다.
+alter table public.wf_workers add column if not exists attend_day text;
+alter table public.wf_workers add column if not exists attend_at text;
+alter table public.wf_workers add column if not exists attend_by text;
 
 create table if not exists public.wf_clients (
   id text primary key,
