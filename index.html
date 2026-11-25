@@ -460,8 +460,8 @@
   .admin-chip{max-width:190px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 
   /* ---------- 탭바 6칸 · 메신저 배지 ---------- */
-  .tabbar-inner{grid-template-columns:repeat(7,1fr)}
-  .tab{padding:6px 0 5px;font-size:9.5px;gap:1px;min-width:0}
+  .tabbar-inner{grid-template-columns:repeat(8,1fr)}
+  .tab{padding:6px 0 5px;font-size:9px;gap:1px;min-width:0}
   .tab .ico{font-size:16px}
   .tab{position:relative}
   .tab-badge{
@@ -612,6 +612,34 @@
   .wh-line{font-size:12.5px;font-weight:800;color:#1b1f27;display:flex;align-items:center;gap:5px;flex-wrap:wrap}
   .wh-line2{font-size:11.5px;font-weight:700;color:var(--muted);margin-top:3px}
   .wh-btns{display:flex;gap:5px;flex-wrap:wrap;margin-top:7px}
+
+  /* ---------- 소개자 · 소개인 정산 ---------- */
+  .ref-sum{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:2px 0 10px}
+  .ref-cell{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:9px 4px;text-align:center;box-shadow:var(--shadow)}
+  .ref-cell b{display:block;font-size:13.5px;font-weight:900;letter-spacing:-.3px}
+  .ref-cell span{display:block;font-size:10.5px;font-weight:700;color:var(--muted);margin-top:1px}
+  .ref-card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:13px 14px;margin-bottom:10px}
+  .ref-top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+  .ref-who{min-width:0}
+  .ref-name{font-size:14.5px;font-weight:900;display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+  .ref-sub{font-size:11.5px;font-weight:700;color:var(--muted);margin-top:3px;word-break:break-all}
+  .ref-amt{text-align:right;flex:0 0 auto}
+  .ref-amt b{display:block;font-size:15px;font-weight:900;color:var(--brand-deep);font-variant-numeric:tabular-nums}
+  .ref-amt small{display:block;font-size:10.5px;font-weight:700;color:var(--muted);margin-top:1px}
+  .ref-memo{font-size:11.5px;font-weight:700;color:#6b7280;background:#f7f8fa;border-radius:9px;padding:6px 9px;margin-top:8px}
+  .ref-list{margin-top:9px;display:flex;flex-direction:column;gap:7px}
+  .ref-row{border:1px solid var(--line);border-radius:11px;padding:9px 11px;background:#fbfcfd}
+  .ref-row-top{display:flex;align-items:center;gap:5px;flex-wrap:wrap;font-size:13px;font-weight:800}
+  .ref-row-sub{font-size:11px;font-weight:700;color:var(--muted);margin-top:3px}
+  .ref-row-mid{font-size:12px;font-weight:700;margin-top:5px;color:#374151}
+  .ref-row-mid b{font-weight:900;color:var(--ink,#1b1f27)}
+  .ref-row-btns{display:flex;gap:5px;margin-top:6px}
+  .ref-foot{display:flex;gap:5px;flex-wrap:wrap;margin-top:10px}
+  .ref-attach{display:flex;flex-direction:column;gap:6px;margin-bottom:8px}
+  .ref-attach-row{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:10px;padding:9px 11px;background:#fbfcfd;font-size:13px;font-weight:700}
+  .ref-attach-row input{width:17px;height:17px;accent-color:var(--brand)}
+  .ref-attach-name{display:flex;align-items:center;gap:5px;flex:1;min-width:0}
+  .ref-attach-other{font-size:10.5px;font-weight:800;color:#b45309;flex:0 0 auto}
 
   /* ---------- 기록 작성자 배지 ---------- */
   .by-badge{
@@ -787,6 +815,7 @@
       <button class="tab" data-act="tab" data-tab="sms"><span class="ico">✉️</span>문자</button>
       <button class="tab" data-act="tab" data-tab="messenger"><span class="ico">💬</span>메신저<span class="tab-badge" id="chatBadge" hidden>0</span></button>
       <button class="tab" data-act="tab" data-tab="ledger"><span class="ico">📒</span>장부</button>
+      <button class="tab" data-act="tab" data-tab="referrers"><span class="ico">🤝</span>소개자</button>
     </div>
   </nav>
 </div>
@@ -919,13 +948,42 @@ create table if not exists public.wf_messages (
 );
 
 -- ------------------------------------------------------------
--- 실시간 반영: 5개 테이블을 supabase_realtime publication 에 등록
+-- 소개자(인력 소개해 준 사람)와 소개인 출근 일지
+-- 출근 일지는 '하루 1줄'로 쌓여 월별 소개비 정산에 쓰인다 (attend_day 는 마지막 값만 남는다)
+-- ------------------------------------------------------------
+create table if not exists public.wf_referrers (
+  id text primary key,
+  name text,
+  phone text,
+  bank text,
+  account text,
+  memo text,
+  created_at timestamptz default now()
+);
+
+create table if not exists public.wf_attendance (
+  id text primary key,
+  worker_id text,
+  worker_name text,
+  day text,
+  at text,
+  by text,
+  created_at timestamptz default now()
+);
+create index if not exists wf_attendance_worker_day on public.wf_attendance (worker_id, day);
+
+-- 인력에 소개자 연결
+-- 소개비: 첫 출근일부터 3개월 되는 날의 전날까지 1일 10,000원, 그 다음날부터 1일 5,000원
+alter table public.wf_workers add column if not exists referrer_id text;
+
+-- ------------------------------------------------------------
+-- 실시간 반영: 테이블을 supabase_realtime publication 에 등록
 -- ------------------------------------------------------------
 do $$
 declare
   t text;
 begin
-  foreach t in array array['wf_workers', 'wf_clients', 'wf_logs', 'wf_sms', 'wf_messages', 'wf_expenses', 'wf_admins']
+  foreach t in array array['wf_workers', 'wf_clients', 'wf_logs', 'wf_sms', 'wf_messages', 'wf_expenses', 'wf_admins', 'wf_referrers', 'wf_attendance']
   loop
     if not exists (
       select 1 from pg_publication_tables
@@ -947,6 +1005,8 @@ alter table public.wf_sms      enable row level security;
 alter table public.wf_messages enable row level security;
 alter table public.wf_expenses enable row level security;
 alter table public.wf_admins   enable row level security;
+alter table public.wf_referrers  enable row level security;
+alter table public.wf_attendance enable row level security;
 
 drop policy if exists wf_anon_all on public.wf_workers;
 create policy wf_anon_all on public.wf_workers  for all to anon, authenticated using (true) with check (true);
@@ -969,9 +1029,15 @@ create policy wf_anon_all on public.wf_expenses for all to anon, authenticated u
 drop policy if exists wf_anon_all on public.wf_admins;
 create policy wf_anon_all on public.wf_admins   for all to anon, authenticated using (true) with check (true);
 
+drop policy if exists wf_anon_all on public.wf_referrers;
+create policy wf_anon_all on public.wf_referrers  for all to anon, authenticated using (true) with check (true);
+
+drop policy if exists wf_anon_all on public.wf_attendance;
+create policy wf_anon_all on public.wf_attendance for all to anon, authenticated using (true) with check (true);
+
 grant select, insert, update, delete on
   public.wf_workers, public.wf_clients, public.wf_logs, public.wf_sms, public.wf_messages, public.wf_expenses,
-  public.wf_admins
+  public.wf_admins, public.wf_referrers, public.wf_attendance
   to anon, authenticated;
 
 </script>
@@ -1212,6 +1278,8 @@ function seedData(){
     shifts: [],
     messages: [],
     expenses: [],
+    referrers: [],
+    attendance: [],
     chat: []
   };
 }
@@ -1327,8 +1395,12 @@ function upgradeV3(v3){
 function normalizeDB(db){
   if (!Array.isArray(db.expenses)) db.expenses = [];
   if (!Array.isArray(db.chat)) db.chat = [];
+  if (!Array.isArray(db.referrers)) db.referrers = [];
+  if (!Array.isArray(db.attendance)) db.attendance = [];
   db.version = 4;
   db.workers = db.workers.map(w => {
+
+    if (w.referrerId === undefined || w.referrerId === null) w.referrerId = '';
     if (!(num(w.rate) > 0)) w.rate = RATE;
     if (w.age === undefined) w.age = null;
     if (w.personality === undefined) w.personality = '';
@@ -1433,6 +1505,7 @@ const ui = {
   smsSel: new Set(),
   smsBody: '',
   ledgerMonth: 'current',
+  refMonth: 'current',
   chatBody: '',
   chatTag: '',
   loginAdmin: ''
@@ -1457,12 +1530,12 @@ const sumWage = arr => arr.reduce((a, s) => a + num(s.wage), 0);
    ============================================================ */
 const SB_URL = 'https://jcwqckpeermclndcerqq.supabase.co';
 const SB_PUBLISHABLE_KEY = 'sb_publishable_g4AH8ZbBoj3STVdgnRPeuA_lMxAicek';
-const TABLES = { workers: 'wf_workers', clients: 'wf_clients', logs: 'wf_logs', sms: 'wf_sms', chat: 'wf_messages', expenses: 'wf_expenses' };
-const TABLE_LIST = ['workers', 'clients', 'logs', 'sms', 'chat', 'expenses'];
-const TABLE_LABEL = { workers: 'wf_workers (인력)', clients: 'wf_clients (거래처)', logs: 'wf_logs (근무·입금)', sms: 'wf_sms (문자)', chat: 'wf_messages (메신저)', expenses: 'wf_expenses (지출)' };
-const CORE_TABLES = ['workers', 'clients', 'logs', 'sms', 'chat'];   /* 지출 표가 없어도 실시간 연결은 유지 */
+const TABLES = { workers: 'wf_workers', clients: 'wf_clients', logs: 'wf_logs', sms: 'wf_sms', chat: 'wf_messages', expenses: 'wf_expenses', referrers: 'wf_referrers', attendance: 'wf_attendance' };
+const TABLE_LIST = ['workers', 'clients', 'logs', 'sms', 'chat', 'expenses', 'referrers', 'attendance'];
+const TABLE_LABEL = { workers: 'wf_workers (인력)', clients: 'wf_clients (거래처)', logs: 'wf_logs (근무·입금)', sms: 'wf_sms (문자)', chat: 'wf_messages (메신저)', expenses: 'wf_expenses (지출)', referrers: 'wf_referrers (소개자)', attendance: 'wf_attendance (출근 일지)' };
+const CORE_TABLES = ['workers', 'clients', 'logs', 'sms', 'chat'];   /* 지출·소개자 표가 없어도 실시간 연결은 유지 */
 const CHAT_TAGS = ['', '현장', '근무', '정산', '공지'];
-const COL_LABEL = { allowance: '수당', allowance_memo: '수당 사유', age_group: '연령대', attend_day: '출근 날짜', attend_at: '출근 시각', attend_by: '출근 기록자' };
+const COL_LABEL = { allowance: '수당', allowance_memo: '수당 사유', age_group: '연령대', attend_day: '출근 날짜', attend_at: '출근 시각', attend_by: '출근 기록자', referrer_id: '소개자' };
 const warnedCols = {};
 const SEEN_PREFIX = 'wfs_chat_seen_';
 const ADMIN_DEFAULTS = [
@@ -1520,6 +1593,7 @@ function rowWorker(r){
     attendDay: r.attend_day || '',
     attendAt: r.attend_at || null,
     attendBy: r.attend_by || '',
+    referrerId: r.referrer_id || '',
     createdAt: r.created_at || null
   };
 }
@@ -1539,6 +1613,7 @@ function colWorker(w){
     attend_day: w.attendDay || '',
     attend_at: w.attendAt || null,
     attend_by: w.attendBy || '',
+    referrer_id: w.referrerId || '',
     created_at: w.createdAt || new Date().toISOString()
   };
 }
@@ -1699,6 +1774,52 @@ function colChat(m){
   };
 }
 
+/* ---------- 소개자 · 출근 일지 ---------- */
+function rowReferrer(r){
+  return {
+    id: r.id,
+    name: r.name || '',
+    phone: r.phone || '',
+    bank: r.bank || '',
+    account: r.account || '',
+    memo: r.memo || '',
+    createdAt: r.created_at || null
+  };
+}
+function colReferrer(r){
+  return {
+    id: r.id,
+    name: r.name || '',
+    phone: r.phone || '',
+    bank: r.bank || '',
+    account: r.account || '',
+    memo: r.memo || '',
+    created_at: r.createdAt || new Date().toISOString()
+  };
+}
+function rowAttend(r){
+  return {
+    id: r.id,
+    workerId: r.worker_id || '',
+    workerName: r.worker_name || '',
+    day: r.day || '',
+    at: r.at || null,
+    by: r.by || '',
+    createdAt: r.created_at || null
+  };
+}
+function colAttend(a){
+  return {
+    id: a.id,
+    worker_id: a.workerId || '',
+    worker_name: a.workerName || '',
+    day: a.day || '',
+    at: a.at || null,
+    by: a.by || '',
+    created_at: a.createdAt || new Date().toISOString()
+  };
+}
+
 /* ---------- 연결 상태 ---------- */
 function dbChipMeta(){
   if (SYNC.state === 'live'){
@@ -1797,6 +1918,8 @@ function syncClientRow(c){ return dbUpsert('clients', colClient(c)); }
 function syncShift(s){ return dbUpsert('logs', colLog(s)); }
 function syncSms(m){ return dbUpsert('sms', colSms(m)); }
 function syncChatMsg(m){ return dbUpsert('chat', colChat(m)); }
+function syncReferrer(r){ return dbUpsert('referrers', colReferrer(r)); }
+function syncAttendDay(a){ return dbUpsert('attendance', colAttend(a)); }
 function syncExpense(e){ return dbUpsert('expenses', colExpense(e)); }
 
 /* ---------- 읽기 ---------- */
@@ -1830,6 +1953,8 @@ function localArr(kind){
   if (kind === 'sms') return DB.messages;
   if (kind === 'chat') return DB.chat;
   if (kind === 'expenses') return DB.expenses;
+  if (kind === 'referrers') return DB.referrers;
+  if (kind === 'attendance') return DB.attendance;
   return null;
 }
 function mapRow(kind, r){
@@ -1838,6 +1963,8 @@ function mapRow(kind, r){
   if (kind === 'logs') return rowLog(r);
   if (kind === 'sms') return rowSms(r);
   if (kind === 'expenses') return rowExpense(r);
+  if (kind === 'referrers') return rowReferrer(r);
+  if (kind === 'attendance') return rowAttend(r);
   return rowChat(r);
 }
 function upsertLocal(kind, row){
@@ -2908,7 +3035,8 @@ function render(resetScroll){
   renderHeader();
   const views = {
     home: viewHome, shifts: viewShifts, workers: viewWorkers,
-    clients: viewClients, sms: viewSms, messenger: viewMessenger, ledger: viewLedger
+    clients: viewClients, sms: viewSms, messenger: viewMessenger, ledger: viewLedger,
+    referrers: viewReferrers
   };
   document.body.classList.toggle('chatting', ui.tab === 'messenger');
   $('#view').innerHTML = (views[ui.tab] || viewHome)();
@@ -3552,6 +3680,267 @@ function viewClients(){
   '<div id="clientList">' + clientListHTML() + '</div>';
 }
 
+/* ============================================================
+   소개자 · 소개인 출근 정산
+   · 소개인이 출근한 날을 하루 1일로 센다
+     (같은 날 1차·2차로 여러 번 출역해도, ON/OFF 를 여러 번 해도 1일)
+   · 첫 출근일부터 3개월이 되는 날의 전날까지는 1일 10,000원,
+     그 다음날부터는 1일 5,000원 (예: 11/26 첫 출근 → 2/25까지 1만원, 2/26부터 5천원)
+   · 날짜별로 단가를 매겨 월 단위(YYYY-MM)로 합산한다
+   ============================================================ */
+const REF_NEW_RATE = 10000;
+const REF_OLD_RATE = 5000;
+
+/* 'YYYY-MM-DD' 에 달을 더한다 (그 달에 없는 날은 그 달 마지막 날로) */
+function keyAddMonths(key, n){
+  const p = String(key || '').split('-').map(Number);
+  if (p.length !== 3 || p.some(v => !isFinite(v))) return '';
+  const base = new Date(p[0], p[1] - 1 + Number(n || 0), 1);
+  const lastDay = new Date(base.getFullYear(), base.getMonth() + 1, 0).getDate();
+  base.setDate(Math.min(p[2], lastDay));
+  return base.getFullYear() + '-' + pad2(base.getMonth() + 1) + '-' + pad2(base.getDate());
+}
+
+function referrerById(id){ return (DB.referrers || []).find(r => r.id === id) || null; }
+function referrerName(id){ const r = referrerById(id); return r ? (r.name || '이름 없음') : ''; }
+function referrerOptions(selected){
+  const list = (DB.referrers || []).slice().sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+  return '<option value="">소개자 없음</option>' +
+    list.map(r => '<option value="' + esc(r.id) + '"' + (r.id === selected ? ' selected' : '') + '>' + esc(r.name || '이름 없음') + '</option>').join('');
+}
+
+/* 첫 출근일 기준 3개월 경계 — 이 날부터는 5,000원 */
+function refBoundaryDay(firstDay){ return firstDay ? keyAddMonths(firstDay, 3) : ''; }
+function refRateAt(firstDay, day){
+  if (!firstDay || !day) return 0;
+  const b = refBoundaryDay(firstDay);
+  return (b && day < b) ? REF_NEW_RATE : REF_OLD_RATE;
+}
+
+/* 그 인력이 출근한 날 목록 (하루 1번, 오늘 기준일까지만) */
+function refAttendDays(workerId){
+  const today = dispatchDateKey();
+  const set = {};
+  (DB.attendance || []).forEach(a => {
+    if (a.workerId === workerId && a.day && a.day <= today) set[a.day] = 1;
+  });
+  /* 예전 기록 호환: 근무 기록이 있는 날도 출근한 날로 본다 */
+  DB.shifts.forEach(s => {
+    if (s.workerId === workerId && s.date && s.date <= today) set[s.date] = 1;
+  });
+  return Object.keys(set).sort();
+}
+
+/* 소개인 1명의 월별 정산 */
+function refWorkerStats(w, monthKey){
+  const days = refAttendDays(w.id);
+  const first = days.length ? days[0] : '';
+  const boundary = refBoundaryDay(first);
+  const inMonth = days.filter(d => d.slice(0, 7) === monthKey);
+  let dNew = 0, dOld = 0, amount = 0;
+  inMonth.forEach(d => {
+    const rate = refRateAt(first, d);
+    amount += rate;
+    if (rate === REF_NEW_RATE) dNew++; else dOld++;
+  });
+  return { first: first, boundary: boundary, days: inMonth, dNew: dNew, dOld: dOld, amount: amount, allDays: days.length };
+}
+
+function refMonths(){
+  const set = {};
+  (DB.attendance || []).forEach(a => { if (a.day) set[String(a.day).slice(0, 7)] = 1; });
+  DB.shifts.forEach(s => { if (s.date) set[String(s.date).slice(0, 7)] = 1; });
+  return Object.keys(set).filter(m => /^\d{4}-\d{2}$/.test(m)).sort().reverse();
+}
+function refMonthKey(){
+  if (ui.refMonth && ui.refMonth !== 'current') return ui.refMonth;
+  return String(dispatchDateKey()).slice(0, 7);
+}
+
+/* 출근한 날을 일지에 남긴다 (같은 날은 한 줄만) */
+function recordAttendDay(w, day, when){
+  if (!w || !w.id || !day) return null;
+  if (day > dispatchDateKey()) return null;      /* 아직 오지 않은 날은 세지 않는다 */
+  const id = w.id + '_' + day;
+  const at = (when instanceof Date && !isNaN(when)) ? when.toISOString() : new Date().toISOString();
+  const found = (DB.attendance || []).find(a => a.id === id);
+  if (found){
+    if (!found.at) found.at = at;
+    return found;
+  }
+  const row = { id: id, workerId: w.id, workerName: w.name || '', day: day, at: at, by: curAdmin().id, createdAt: at };
+  DB.attendance.push(row);
+  saveDB();
+  if (typeof syncAttendDay === 'function') syncAttendDay(row);
+  return row;
+}
+
+function refWorkerRowHTML(w, monthKey){
+  const st = refWorkerStats(w, monthKey);
+  const seg = st.first ? (refRateAt(st.first, monthKey + '-01') === REF_NEW_RATE) : false;
+  return '<div class="ref-row">' +
+    '<div class="ref-row-top"><b>' + esc(w.name) + '</b>' + ageGroupBadge(w) +
+      (st.first
+        ? '<span class="badge ' + (seg ? 'ok' : 'wait') + '">' + (seg ? '3개월 이내 10,000원' : '3개월 이후 5,000원') + '</span>'
+        : '<span class="badge">출근 기록 없음</span>') +
+    '</div>' +
+    '<div class="ref-row-sub">' +
+      (st.first
+        ? '첫 출근 ' + esc(fmtDate(st.first)) + ' · ' + esc(fmtDate(st.boundary)) + '부터 5,000원'
+        : '출근하면 첫 출근일부터 3개월은 1일 10,000원') +
+    '</div>' +
+    '<div class="ref-row-mid">이번 달 <b>' + st.days.length + '일</b>' +
+      (st.days.length ? ' · 1만 ' + st.dNew + '일 · 5천 ' + st.dOld + '일' : '') +
+      ' = <b>' + won(st.amount) + '</b></div>' +
+    '<div class="ref-row-btns"><button class="mini" data-act="worker-shifts" data-id="' + esc(w.id) + '">근무 내역</button></div>' +
+  '</div>';
+}
+
+function viewReferrers(){
+  const monthKey = refMonthKey();
+  const todayKey = String(dispatchDateKey()).slice(0, 7);
+  const months = refMonths();
+  let monthOpts = '<option value="current"' + (ui.refMonth === 'current' || !ui.refMonth ? ' selected' : '') + '>이번 달 (' + todayKey + ')</option>';
+  monthOpts += months.map(m => '<option value="' + m + '"' + (ui.refMonth === m ? ' selected' : '') + '>' +
+    m.slice(0, 4) + '년 ' + Number(m.slice(5, 7)) + '월</option>').join('');
+
+  const refs = (DB.referrers || []).slice().sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+  const allReferrals = DB.workers.filter(w => w.referrerId && referrerById(w.referrerId));
+  let totalDays = 0, totalAmount = 0;
+  allReferrals.forEach(w => {
+    const st = refWorkerStats(w, monthKey);
+    totalDays += st.days.length;
+    totalAmount += st.amount;
+  });
+
+  const sum = '<div class="ref-sum">' +
+    '<div class="ref-cell"><b>' + refs.length + '</b><span>소개자</span></div>' +
+    '<div class="ref-cell"><b>' + allReferrals.length + '</b><span>소개인</span></div>' +
+    '<div class="ref-cell"><b>' + totalDays + '일</b><span>이번 달 출근</span></div>' +
+    '<div class="ref-cell"><b>' + won(totalAmount) + '</b><span>정산 합계</span></div>' +
+  '</div>';
+
+  const cards = refs.map(r => {
+    const mine = DB.workers.filter(w => w.referrerId === r.id);
+    const days = mine.reduce((a, w) => a + refWorkerStats(w, monthKey).days.length, 0);
+    const amt = mine.reduce((a, w) => a + refWorkerStats(w, monthKey).amount, 0);
+    return '<div class="ref-card">' +
+      '<div class="ref-top">' +
+        '<div class="ref-who"><div class="ref-name">' + esc(r.name || '이름 없음') +
+          ' <span class="badge cnt">소개인 ' + mine.length + '명</span></div>' +
+          '<div class="ref-sub">' + esc(r.phone || '연락처 없음') +
+            (r.bank || r.account ? ' · ' + esc([r.bank, r.account].filter(Boolean).join(' ')) : '') + '</div>' +
+        '</div>' +
+        '<div class="ref-amt"><b>' + won(amt) + '</b><small>' + days + '일 · 이번 달</small></div>' +
+      '</div>' +
+      (r.memo ? '<div class="ref-memo">' + esc(r.memo) + '</div>' : '') +
+      (mine.length
+        ? '<div class="ref-list">' + mine.map(w => refWorkerRowHTML(w, monthKey)).join('') + '</div>'
+        : '<p class="form-note">아직 소개인이 없습니다. [소개인 연결]로 인력을 붙여 주세요.</p>') +
+      '<div class="ref-foot">' +
+        '<button class="mini" data-act="ref-attach" data-id="' + esc(r.id) + '">소개인 연결</button>' +
+        '<button class="mini" data-act="edit-referrer" data-id="' + esc(r.id) + '">수정</button>' +
+        '<button class="mini danger" data-act="del-referrer" data-id="' + esc(r.id) + '">삭제</button>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+
+  const orphan = DB.workers.filter(w => w.referrerId && !referrerById(w.referrerId)).length;
+
+  return '' +
+    '<div class="row2" style="margin:2px 0 10px;gap:8px">' +
+      '<label class="f" style="margin:0"><span>정산 기간</span><select id="refMonth">' + monthOpts + '</select></label>' +
+      '<button class="btn primary" data-act="add-referrer" style="align-self:end;height:42px">＋ 소개자 추가</button>' +
+    '</div>' +
+    sum +
+    '<p class="form-note">소개인이 <b>출근한 날</b>을 하루 1일로 셈합니다(같은 날 1차·2차·ON/OFF 를 여러 번 해도 1일). ' +
+      '첫 출근일부터 <b>3개월이 되는 날의 전날까지 1일 10,000원</b>, 그 다음날부터 <b>1일 5,000원</b>으로 날짜별로 계산해 월 단위로 합산합니다.</p>' +
+    (orphan ? '<p class="form-note" style="color:#b45309">삭제된 소개자를 가리키는 인력 ' + orphan + '명이 있습니다. 인력 수정에서 소개자를 다시 골라 주세요.</p>' : '') +
+    (refs.length ? cards : '<div class="card muted" style="font-size:12.5px;padding:16px">아직 등록된 소개자가 없습니다. <b>＋ 소개자 추가</b>로 소개해 준 사람을 등록하세요.</div>');
+}
+
+/* 소개자 추가·수정 */
+function openReferrerModal(id){
+  const r = id ? referrerById(id) : null;
+  const body =
+    '<label class="f"><span>이름</span><input type="text" name="name" value="' + (r ? esc(r.name) : '') + '" placeholder="예: 김소개"></label>' +
+    '<label class="f"><span>연락처</span><input type="tel" name="phone" value="' + (r ? esc(r.phone || '') : '') + '" placeholder="010-0000-0000"></label>' +
+    '<div class="row2">' +
+      '<label class="f"><span>은행</span><input type="text" name="bank" value="' + (r ? esc(r.bank || '') : '') + '" placeholder="예: 국민"></label>' +
+      '<label class="f"><span>계좌번호</span><input type="text" name="account" value="' + (r ? esc(r.account || '') : '') + '" placeholder="123-456-789012"></label>' +
+    '</div>' +
+    '<label class="f"><span>메모</span><input type="text" name="memo" value="' + (r ? esc(r.memo || '') : '') + '" placeholder="소개 경로·정산 방식 등"></label>' +
+    '<p class="form-note">등록한 소개자는 인력 수정·추가 화면에서 골라 연결할 수 있습니다.</p>';
+
+  openModal({
+    title: r ? '소개자 수정' : '소개자 추가',
+    sub: '이름 · 연락처 · 계좌 · 메모',
+    body,
+    submitLabel: r ? '수정 저장' : '추가',
+    onSubmit: (wrap, close) => {
+      const g = n => { const el = $('[name=' + n + ']', wrap); return el ? el.value.trim() : ''; };
+      const name = g('name');
+      if (!name){ toast('이름을 입력해 주세요'); return; }
+      const data = { name: name, phone: g('phone'), bank: g('bank'), account: g('account'), memo: g('memo') };
+      let saved;
+      if (r){
+        Object.assign(r, data);
+        saved = r;
+      } else {
+        saved = Object.assign({ id: uid(), createdAt: new Date().toISOString() }, data);
+        if (!Array.isArray(DB.referrers)) DB.referrers = [];
+        DB.referrers.push(saved);
+      }
+      saveDB();
+      if (typeof syncReferrer === 'function') syncReferrer(saved);
+      close();
+      render();
+      toast(r ? '소개자를 수정했습니다' : saved.name + ' 님을 소개자로 등록했습니다');
+    }
+  });
+}
+
+/* 소개자에 소개인(인력) 연결 — 체크해서 붙이고 떼어 낸다 */
+function openRefAttachModal(rid){
+  const r = referrerById(rid);
+  if (!r) return;
+  if (!DB.workers.length){ toast('먼저 인력을 등록해 주세요'); return; }
+  const body = '<div class="ref-attach">' + DB.workers.map(w => {
+    const on = w.referrerId === r.id;
+    const other = w.referrerId && w.referrerId !== r.id ? referrerName(w.referrerId) : '';
+    return '<label class="ref-attach-row">' +
+      '<input type="checkbox" data-w="' + esc(w.id) + '"' + (on ? ' checked' : '') + '>' +
+      '<span class="ref-attach-name">' + esc(w.name) + ageGroupBadge(w, { none: true }) + '</span>' +
+      (other ? '<small class="ref-attach-other">' + esc(other) + ' 소개</small>' : '') +
+    '</label>';
+  }).join('') + '</div>' +
+    '<p class="form-note">체크한 인력은 이 소개자의 소개인으로 정산됩니다. 해제하면 소개자 연결만 풀립니다(인력은 그대로).</p>';
+
+  openModal({
+    title: esc(r.name || '소개자') + ' · 소개인 연결',
+    sub: '체크한 인력을 소개인으로 정산합니다',
+    body,
+    submitLabel: '저장',
+    onSubmit: (wrap, close) => {
+      const boxes = $$('input[type=checkbox][data-w]', wrap);
+      let n = 0;
+      boxes.forEach(b => {
+        const w = workerById(b.dataset.w);
+        if (!w) return;
+        if (b.checked){
+          if (w.referrerId !== r.id){ w.referrerId = r.id; n++; syncWorker(w); }
+        } else if (w.referrerId === r.id){
+          w.referrerId = ''; n++; syncWorker(w);
+        }
+      });
+      saveDB();
+      close();
+      render();
+      toast(n ? '소개인 연결을 ' + n + '건 바꿨습니다' : '바뀐 내용이 없습니다');
+    }
+  });
+}
+
 /* ---------------- 문자 ---------------- */
 const TEMPLATES = {
   client: [
@@ -3706,7 +4095,7 @@ function renderSmsList(){
    안드로이드 뒤로가기 — 모달은 닫히고, 탭은 직전 탭으로
    ============================================================ */
 const NAV = { seq: 0, pending: 0 };
-const NAV_TABS = ['home', 'shifts', 'workers', 'clients', 'sms', 'messenger', 'ledger'];
+const NAV_TABS = ['home', 'shifts', 'workers', 'clients', 'sms', 'messenger', 'ledger', 'referrers'];
 
 function navPush(state){
   try { history.pushState(state, ''); } catch(e){}
@@ -4218,6 +4607,7 @@ function markAttend(w, when, silent){
   w.attendBy = curAdmin().id;
   saveDB();
   syncWorker(w);
+  recordAttendDay(w, day, now);   /* 날짜별 출근 일지 — 소개비 월별 정산에 쓴다 */
   if (!silent){
     render();
     toast(w.name + ' 님 출근 완료 · ' + hmOf(now));
@@ -4414,6 +4804,7 @@ function startShiftNow(w, when, client){
   if (!wasAttended) markAttend(w, now, true);
   DB.shifts.push(rec);
   saveDB();
+  recordAttendDay(w, rec.date, now);   /* 출역한 날을 출근 일지에 남긴다 */
   syncShift(rec);
   render();
   const mine = DB.shifts.filter(s => s.workerId === w.id && s.date === rec.date);
@@ -4949,6 +5340,8 @@ function openWorkerModal(id){
         (w && num(w.rate) > 0 ? num(w.rate) : RATE) + '"></label>' +
       '<label class="f"><span>계좌정보</span><input type="text" name="account" value="' + (w ? esc(w.account || '') : '') + '" placeholder="국민은행 123-456-789012"></label>' +
     '</div>' +
+    '<label class="f"><span>소개자 <em>선택 · 소개비 정산에 쓰입니다</em></span>' +
+      '<select name="referrerId">' + referrerOptions(w ? w.referrerId : '') + '</select></label>' +
     '<label class="f"><span>성향</span><input type="text" name="personality" value="' + (w ? esc(w.personality || '') : '') + '" placeholder="예: 성실하고 말수 적음"></label>' +
     '<label class="f"><span>외모</span><input type="text" name="looks" value="' + (w ? esc(w.looks || '') : '') + '" placeholder="예: 건장한 체격, 단정한 인상"></label>' +
     '<label class="f"><span>메모</span><input type="text" name="memo" value="' + (w ? esc(w.memo || '') : '') + '" placeholder="숙련도·가능 요일 등"></label>' +
@@ -4974,6 +5367,7 @@ function openWorkerModal(id){
         personality: g('personality'),
         looks: g('looks'),
         account: g('account'),
+        referrerId: g('referrerId'),
         memo: g('memo')
       };
       let saved;
@@ -6394,6 +6788,34 @@ document.addEventListener('click', ev => {
       break;
     }
 
+    /* ---------- 소개자 ---------- */
+    case 'add-referrer':
+      openReferrerModal(null);
+      break;
+
+    case 'edit-referrer':
+      openReferrerModal(id);
+      break;
+
+    case 'ref-attach':
+      openRefAttachModal(id);
+      break;
+
+    case 'del-referrer': {
+      const r = referrerById(id);
+      if (!r) break;
+      const n = DB.workers.filter(w => w.referrerId === id).length;
+      confirmModal('소개자 삭제',
+        (r.name || '소개자') + ' 님을 삭제합니다.' + (n ? '\n소개인 ' + n + '명의 소개자 연결이 풀립니다(인력·근무 기록은 그대로).' : ''),
+        '삭제', () => {
+          DB.referrers = (DB.referrers || []).filter(x => x.id !== id);
+          DB.workers.forEach(w => { if (w.referrerId === id){ w.referrerId = ''; syncWorker(w); } });
+          if (typeof dbDelete === 'function') dbDelete('referrers', id);
+          saveDB(); render(); toast('소개자를 삭제했습니다');
+        });
+      break;
+    }
+
     case 'sms-mode':
       ui.smsMode = el.dataset.mode;
       ui.smsSel = new Set();
@@ -6474,6 +6896,11 @@ document.addEventListener('change', ev => {
 
   if (t.id === 'ledgerMonth'){
     ui.ledgerMonth = t.value;
+    render();
+    return;
+  }
+  if (t.id === 'refMonth'){
+    ui.refMonth = t.value;
     render();
     return;
   }

@@ -124,13 +124,42 @@ create table if not exists public.wf_messages (
 );
 
 -- ------------------------------------------------------------
--- 실시간 반영: 5개 테이블을 supabase_realtime publication 에 등록
+-- 소개자(인력 소개해 준 사람)와 소개인 출근 일지
+-- 출근 일지는 '하루 1줄'로 쌓여 월별 소개비 정산에 쓰인다 (attend_day 는 마지막 값만 남는다)
+-- ------------------------------------------------------------
+create table if not exists public.wf_referrers (
+  id text primary key,
+  name text,
+  phone text,
+  bank text,
+  account text,
+  memo text,
+  created_at timestamptz default now()
+);
+
+create table if not exists public.wf_attendance (
+  id text primary key,
+  worker_id text,
+  worker_name text,
+  day text,
+  at text,
+  by text,
+  created_at timestamptz default now()
+);
+create index if not exists wf_attendance_worker_day on public.wf_attendance (worker_id, day);
+
+-- 인력에 소개자 연결
+-- 소개비: 첫 출근일부터 3개월 되는 날의 전날까지 1일 10,000원, 그 다음날부터 1일 5,000원
+alter table public.wf_workers add column if not exists referrer_id text;
+
+-- ------------------------------------------------------------
+-- 실시간 반영: 테이블을 supabase_realtime publication 에 등록
 -- ------------------------------------------------------------
 do $$
 declare
   t text;
 begin
-  foreach t in array array['wf_workers', 'wf_clients', 'wf_logs', 'wf_sms', 'wf_messages', 'wf_expenses', 'wf_admins']
+  foreach t in array array['wf_workers', 'wf_clients', 'wf_logs', 'wf_sms', 'wf_messages', 'wf_expenses', 'wf_admins', 'wf_referrers', 'wf_attendance']
   loop
     if not exists (
       select 1 from pg_publication_tables
@@ -152,6 +181,8 @@ alter table public.wf_sms      enable row level security;
 alter table public.wf_messages enable row level security;
 alter table public.wf_expenses enable row level security;
 alter table public.wf_admins   enable row level security;
+alter table public.wf_referrers  enable row level security;
+alter table public.wf_attendance enable row level security;
 
 drop policy if exists wf_anon_all on public.wf_workers;
 create policy wf_anon_all on public.wf_workers  for all to anon, authenticated using (true) with check (true);
@@ -174,7 +205,13 @@ create policy wf_anon_all on public.wf_expenses for all to anon, authenticated u
 drop policy if exists wf_anon_all on public.wf_admins;
 create policy wf_anon_all on public.wf_admins   for all to anon, authenticated using (true) with check (true);
 
+drop policy if exists wf_anon_all on public.wf_referrers;
+create policy wf_anon_all on public.wf_referrers  for all to anon, authenticated using (true) with check (true);
+
+drop policy if exists wf_anon_all on public.wf_attendance;
+create policy wf_anon_all on public.wf_attendance for all to anon, authenticated using (true) with check (true);
+
 grant select, insert, update, delete on
   public.wf_workers, public.wf_clients, public.wf_logs, public.wf_sms, public.wf_messages, public.wf_expenses,
-  public.wf_admins
+  public.wf_admins, public.wf_referrers, public.wf_attendance
   to anon, authenticated;
