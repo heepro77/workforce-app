@@ -3212,7 +3212,8 @@ function viewHome(){
     todayBoard +
     '<div class="hero-list">' + todayPills + '</div>' +
     '<div class="hero-acts">' +
-      '<button class="hero-btn" data-act="quick-shift">⏱ 오늘 근무시간 등록</button>' +
+      '<button class="hero-btn" data-act="all-shifts">📋 전체 근무 기록</button>' +
+      '<button class="hero-btn ghost" data-act="quick-shift">⏱ 오늘 근무시간 등록</button>' +
     '</div>' +
   '</section>' +
 
@@ -3584,6 +3585,99 @@ function openWorkerShifts(workerId){
   openModal({
     title: '근무 내역',
     sub: esc(w.name) + (ageGroupKey(w) ? ' · ' + ageGroupKey(w) : '') + ' · ' + list.length + '건',
+    body,
+    noFooter: true
+  });
+}
+
+/* ============================================================
+   전체 근무 기록 — 오늘 출역 카드의 '전체 근무 기록' 버튼
+   · 모든 인력의 오늘·지난 회차를 한 창에 모아 보여 준다
+   · 회차마다 시간·거래처·일당·입금 상태 + 계좌 문자/수정/삭제
+   · 맨 위 '+ 새 근무시간 등록' → 등록을 마치면 이 창으로 돌아온다
+   ============================================================ */
+function allShiftRow(s){
+  const open = isOpenShift(s);
+  const w = workerById(s.workerId);
+  const name = s.workerName || (w && w.name) || '인력';
+  const allow = allowanceOf(s);
+  return '<div class="wh-row">' +
+    '<div class="wh-line"><b>' + esc(name) + '</b>' + ageGroupBadge(w) +
+      (open ? '<span class="badge wait">근무중</span>' : '') +
+      (!open && s.clientPaid && s.workerPaid ? '<span class="badge ok">정산완료</span>' : '') +
+    '</div>' +
+    '<div class="wh-line2">' + esc(fmtDate(s.date)) + ' · ' + esc(onOffText(s)) +
+      (open ? ' · 진행중' : ' · ' + esc(hoursLabel(s)) + ' · <b>' + won(s.wage) + '</b>') +
+      (allow ? ' · 수당 ' + won(allow) + ' 포함' : '') +
+    '</div>' +
+    '<div class="wh-line2">🏢 ' + (s.place ? esc(s.place) : '거래처 미지정') +
+      (s.memo ? ' · ' + esc(s.memo) : '') + '</div>' +
+    (open
+      ? '<div class="wh-line2">ON ' + esc(onHM(s)) + ' · ' + esc(elapsedLabel(openMinutes(s))) + ' 경과</div>'
+      : '<div class="wh-line2">거래처 ' + (s.clientPaid ? '<b style="color:#15803d">입금완료</b>' : '<b style="color:#b45309">미입금</b>') +
+        ' · 인력 ' + (s.workerPaid ? '<b style="color:#15803d">지급완료</b>' : '<b style="color:#b45309">미지급</b>') + '</div>') +
+    '<div class="wh-btns">' +
+      (open ? '' : '<button class="mini" data-act="worker-shift-sms" data-id="' + s.id + '">계좌 문자</button>') +
+      '<button class="mini" data-act="' + (open ? 'records-shift-quick' : 'records-shift-edit') + '" data-id="' + s.id + '">' +
+        (open ? '마감·거래처' : '수정') + '</button>' +
+      '<button class="mini danger" data-act="records-shift-del" data-id="' + s.id + '">삭제</button>' +
+    '</div>' +
+  '</div>';
+}
+
+/* 등록·수정·삭제를 마친 뒤 전체 근무 기록 창으로 돌아온다 (뒤로가기 기록이 정리된 다음) */
+function returnToShiftRecords(){
+  let n = 0;
+  const tick = () => {
+    if (topModalEl()) return;                       /* 다른 창이 이미 열렸으면 겹쳐 열지 않는다 */
+    if (NAV.pending === 0 || ++n > 25) openAllShifts();
+    else setTimeout(tick, 30);
+  };
+  setTimeout(tick, 50);
+}
+
+function openAllShifts(){
+  const today = dispatchDateKey();
+  const list = (DB.shifts || []).slice().sort((a, b) =>
+    String(b.date || '').localeCompare(String(a.date || '')) || timeMin(b.start) - timeMin(a.start));
+  const todayList = list.filter(s => s.date === today);
+  const pastList = list.filter(s => s.date !== today);
+  const cDue = list.filter(s => !s.clientPaid);
+  const wDue = list.filter(s => !s.workerPaid);
+  const tHours = todayList.reduce((a, s) => a + (isOpenShift(s) ? 0 : num(hoursOf(s))), 0);
+
+  /* 지난 회차는 날짜별로 묶는다 */
+  const groups = [];
+  pastList.forEach(s => {
+    const last = groups[groups.length - 1];
+    if (!last || last.date !== s.date) groups.push({ date: s.date, rows: [s] });
+    else last.rows.push(s);
+  });
+
+  const body = '<div class="wh">' +
+    '<button class="btn primary wide" type="button" data-act="records-add">＋ 새 근무시간 등록</button>' +
+    '<div class="wh-sum" style="grid-template-columns:repeat(2,1fr);margin-top:10px">' +
+      '<div class="wh-cell"><b>' + list.length + '건</b><span>전체 기록</span></div>' +
+      '<div class="wh-cell"><b>' + todayList.length + '건</b><span>오늘 회차</span></div>' +
+      '<div class="wh-cell"><b>' + won(sumWage(cDue)) + '</b><span>받을 돈 · ' + cDue.length + '건</span></div>' +
+      '<div class="wh-cell"><b>' + won(sumWage(wDue)) + '</b><span>줄 돈 · ' + wDue.length + '건</span></div>' +
+    '</div>' +
+    '<div class="wh-h">오늘 <i>' + esc(fmtDate(today)) + ' · ' + todayList.length + '건' +
+      (tHours ? ' · ' + tHours + '시간' : '') + '</i></div>' +
+    (todayList.length ? todayList.map(allShiftRow).join('')
+      : '<p class="form-note">오늘 등록된 근무 기록이 없습니다. 위의 <b>＋ 새 근무시간 등록</b>으로 바로 넣을 수 있습니다.</p>') +
+    (groups.length
+      ? '<div class="wh-h">지난 기록 <i>' + pastList.length + '건</i></div>' +
+        groups.map(g => '<div class="wh-h" style="margin-top:10px">' + esc(fmtDate(g.date)) + ' <i>' +
+          g.rows.length + '건 · ' + won(sumWage(g.rows)) + '</i></div>' + g.rows.map(allShiftRow).join('')).join('')
+      : (list.length ? '<p class="form-note">지난 근무 기록은 없습니다.</p>' : '')) +
+    '<p class="form-note">행의 <b>계좌 문자 · 수정 · 삭제</b>로 바로 고칠 수 있습니다. 입금 처리와 인력별 필터는 <b>근무·입금</b> 탭에서 합니다.</p>' +
+    '<button class="btn ghost wide" type="button" data-act="worker-shifts-tab" data-id="all">근무·입금 탭에서 보기</button>' +
+  '</div>';
+
+  openModal({
+    title: '전체 근무 기록',
+    sub: '인력 ' + DB.workers.length + '명 · 총 ' + list.length + '건 · 오늘 ' + todayList.length + '건',
     body,
     noFooter: true
   });
@@ -4216,7 +4310,7 @@ function confirmModal(title, sub, label, onYes){
 }
 
 /* 근무 기록 삭제 — 오늘 출역 · 근무·입금 탭 · 근무 내역 창에서 함께 쓴다 */
-function askDeleteShift(sid){
+function askDeleteShift(sid, after){
   const s = DB.shifts.find(x => x.id === sid);
   if (!s) return;
   confirmModal('근무 기록 삭제',
@@ -4225,6 +4319,7 @@ function askDeleteShift(sid){
       DB.shifts = DB.shifts.filter(x => x.id !== sid);
       dbDelete('logs', sid);
       saveDB(); render(); toast('삭제했습니다');
+      if (typeof after === 'function') after();
     });
 }
 
@@ -4399,7 +4494,8 @@ function mountClientPicker(wrap, s, opts){
 }
 
 /* ---------- 근무 등록 / 수정 ---------- */
-function openShiftModal(id){
+function openShiftModal(id, opts){
+  opts = opts || {};
   const s = id ? DB.shifts.find(x => x.id === id) : null;
   if (!DB.workers.length){
     toast('먼저 인력을 등록해 주세요');
@@ -4475,6 +4571,7 @@ function openShiftModal(id){
     submitLabel: s ? '수정 저장' : '등록',
     onSubmit: (wrap, close) => submitShift(wrap, close, s)
   });
+  if (opts.fromRecords) m.wrap.setAttribute('data-return-to', 'records');
 
   const wrap = m.wrap;
   const startEl = $('#fStart', wrap);
@@ -4929,6 +5026,7 @@ function openQuickShift(opts){
     submitLabel: existing ? '수정 저장' : '등록',
     onSubmit: (wrap, close) => submitShift(wrap, close, existing)
   });
+  if (opts.fromRecords) m.wrap.setAttribute('data-return-to', 'records');
 
   const wrap = m.wrap;
   const sEl = $('#fqStart', wrap), eEl = $('#fqEnd', wrap), hEl = $('#fqHours', wrap);
@@ -5224,6 +5322,7 @@ function syncPay(rec, key, want, me){
 }
 
 function submitShift(wrap, close, existing){
+  const returnTo = wrap.getAttribute('data-return-to') || '';
   const g = n => { const el = $('[name=' + n + ']', wrap); return el ? el.value : ''; };
   const workerId = g('workerId');
   const date = g('date');
@@ -5306,6 +5405,7 @@ function submitShift(wrap, close, existing){
   render();
   const done = existing ? '근무 기록을 수정했습니다' : w.name + ' 님 근무를 등록했습니다';
   toast(newClientName ? done + ' · 새 거래처 "' + newClientName + '" 등록' : done);
+  if (returnTo === 'records') returnToShiftRecords();
 }
 
 /* ---------- 인력 ---------- */
@@ -6702,6 +6802,33 @@ document.addEventListener('click', ev => {
         ui.tab = 'shifts';
         render();
       }, 140);
+      break;
+    }
+
+    /* ---------- 전체 근무 기록 창 ---------- */
+    case 'all-shifts':
+      openAllShifts();
+      break;
+    case 'records-add':
+      closeTopModal();
+      setTimeout(() => openQuickShift({ fromRecords: true }), 80);
+      break;
+    case 'records-shift-edit': {
+      const sid = id;
+      closeTopModal();
+      setTimeout(() => openShiftModal(sid, { fromRecords: true }), 80);
+      break;
+    }
+    case 'records-shift-quick': {
+      const sid = id;
+      closeTopModal();
+      setTimeout(() => openQuickShift({ id: sid, fromRecords: true }), 80);
+      break;
+    }
+    case 'records-shift-del': {
+      const sid = id;
+      closeTopModal();
+      setTimeout(() => askDeleteShift(sid, () => returnToShiftRecords()), 80);
       break;
     }
 
