@@ -784,6 +784,15 @@
   .ageg-btn.ageg-5.on{background:#e9f6fb;border-color:#0b6f8f;color:#0b6f8f;box-shadow:0 0 0 3px rgba(11,111,143,.10)}
   .ageg-btn.ageg-6.on{background:#f1ecfd;border-color:#6136b8;color:#6136b8;box-shadow:0 0 0 3px rgba(97,54,184,.10)}
   .ageg-note{font-size:11px;font-weight:700;color:#8b95a1;margin:6px 2px 0;line-height:1.5}
+
+  /* ---------- 장부: 수입 / 지출 ---------- */
+  .led-badge{display:inline-block;font-size:10px;font-weight:900;border-radius:999px;padding:2px 7px;margin-right:5px;letter-spacing:-.2px}
+  .led-badge.in{background:var(--brand-soft);color:var(--brand-deep);border:1px solid #cfdcff}
+  .led-badge.out{background:var(--red-soft);color:#b3261e;border:1px solid #f7d4d5}
+  .rec-amt.money-in{color:var(--brand-deep)}
+  .rec-amt.money-out{color:#b3261e}
+  .led-add{display:flex;gap:6px;align-self:end}
+  .sumcell.wide{grid-column:1 / -1}
 </style>
 </head>
 <body>
@@ -916,6 +925,7 @@ create table if not exists public.wf_sms (
 
 create table if not exists public.wf_expenses (
   id text primary key,
+  kind text default 'expense',
   date text,
   category text,
   amount integer,
@@ -925,6 +935,8 @@ create table if not exists public.wf_expenses (
 );
 
 alter table public.wf_expenses add column if not exists updated_by text;
+-- 장부: 직접 적는 수입(income) / 지출(expense)
+alter table public.wf_expenses add column if not exists kind text default 'expense';
 
 -- ------------------------------------------------------------
 -- 관리자 계정: 이름·역할·비밀번호 해시 (관리자 3명 기기에서 함께 쓴다)
@@ -1505,6 +1517,7 @@ const ui = {
   smsSel: new Set(),
   smsBody: '',
   ledgerMonth: 'current',
+  ledgerKind: 'all',
   refMonth: 'current',
   chatBody: '',
   chatTag: '',
@@ -1530,12 +1543,14 @@ const sumWage = arr => arr.reduce((a, s) => a + num(s.wage), 0);
    ============================================================ */
 const SB_URL = 'https://jcwqckpeermclndcerqq.supabase.co';
 const SB_PUBLISHABLE_KEY = 'sb_publishable_g4AH8ZbBoj3STVdgnRPeuA_lMxAicek';
+/* 화면 빌드 표시 — 휴대폰이 새 화면을 받았는지 설정에서 바로 확인 */
+const APP_BUILD = '2026-11-26 · 장부(수입/지출) · 스크롤 유지';
 const TABLES = { workers: 'wf_workers', clients: 'wf_clients', logs: 'wf_logs', sms: 'wf_sms', chat: 'wf_messages', expenses: 'wf_expenses', referrers: 'wf_referrers', attendance: 'wf_attendance' };
 const TABLE_LIST = ['workers', 'clients', 'logs', 'sms', 'chat', 'expenses', 'referrers', 'attendance'];
-const TABLE_LABEL = { workers: 'wf_workers (인력)', clients: 'wf_clients (거래처)', logs: 'wf_logs (근무·입금)', sms: 'wf_sms (문자)', chat: 'wf_messages (메신저)', expenses: 'wf_expenses (지출)', referrers: 'wf_referrers (소개자)', attendance: 'wf_attendance (출근 일지)' };
+const TABLE_LABEL = { workers: 'wf_workers (인력)', clients: 'wf_clients (거래처)', logs: 'wf_logs (근무·입금)', sms: 'wf_sms (문자)', chat: 'wf_messages (메신저)', expenses: 'wf_expenses (장부 수입·지출)', referrers: 'wf_referrers (소개자)', attendance: 'wf_attendance (출근 일지)' };
 const CORE_TABLES = ['workers', 'clients', 'logs', 'sms', 'chat'];   /* 지출·소개자 표가 없어도 실시간 연결은 유지 */
 const CHAT_TAGS = ['', '현장', '근무', '정산', '공지'];
-const COL_LABEL = { allowance: '수당', allowance_memo: '수당 사유', age_group: '연령대', attend_day: '출근 날짜', attend_at: '출근 시각', attend_by: '출근 기록자', referrer_id: '소개자' };
+const COL_LABEL = { kind: '수입/지출 구분', allowance: '수당', allowance_memo: '수당 사유', age_group: '연령대', attend_day: '출근 날짜', attend_at: '출근 시각', attend_by: '출근 기록자', referrer_id: '소개자' };
 const warnedCols = {};
 const SEEN_PREFIX = 'wfs_chat_seen_';
 const ADMIN_DEFAULTS = [
@@ -1733,6 +1748,7 @@ function colSms(m){
 function rowExpense(r){
   return {
     id: r.id,
+    kind: r.kind === 'income' ? 'income' : 'expense',
     date: r.date || '',
     category: r.category || '',
     amount: num(r.amount),
@@ -1745,6 +1761,7 @@ function rowExpense(r){
 function colExpense(e){
   return {
     id: e.id,
+    kind: e.kind === 'income' ? 'income' : 'expense',
     date: e.date || '',
     category: e.category || '',
     amount: Math.round(num(e.amount)),
@@ -2018,7 +2035,6 @@ function initDbFailed(msg){
 
 async function loadFromDb(keepScroll){
   if (!SYNC.client || SYNC.busy) return false;
-  const keepY = keepScroll ? window.scrollY : 0;
   SYNC.busy = true;
   setDbState('connecting', '');
   await loadAdminsFromDb();
@@ -2087,8 +2103,8 @@ async function loadFromDb(keepScroll){
 
   saveDB();
   SYNC.busy = false;
+  /* 보던 자리는 render() 가 그리기 직전 위치로 스스로 되돌린다 (여기서 따로 scrollTo 하지 않는다) */
   render();
-  if (keepScroll) { try { window.scrollTo({ top: keepY, behavior: 'auto' }); } catch(e){} }
   return true;
 }
 
@@ -2994,41 +3010,186 @@ function renderTabbar(){
    변경이 실시간으로 들어왔을 때, 화면에 돌아와 다시 맞췄을 때) 보던 자리가
    맨 위로 튀지 않게, 그리기 직전 위치를 기억했다가 그대로 되돌린다.
    탭을 옮길 때만 맨 위로 올린다.
+
+   ① 연속 render() — 1번째 render()가 내용을 갈아 끼운 뒤에는 scrollY가
+      0(또는 줄어든 높이로 눌린 값)으로 읽힐 수 있다. 되돌리는 중인 목표
+      (pendingScroll)가 있으면 2번째 render()는 그 목표를 이어받아, 눌린 값을
+      새 자리로 저장하지 않는다.
+   ② 실제 스크롤 상자 — 창(window)뿐 아니라 문서(documentElement)·body·#view·
+      .app 중 실제로 스크롤되는 것을 모두 함께 기억하고 되돌린다.
+      (모바일 PWA에서 창이 아니라 #view 가 스크롤되는 경우가 있다)
+   ③ 높이 고정(min-height pin) — 내용을 갈아 끼우는 동안 #view/.app 높이를
+      잠깐 고정해, 지운 줄 때문에 화면이 짧아지며 스크롤이 위로 눌리는 것을 막는다.
+   ④ 여러 번 되돌리기 — 지금·다음 프레임·90ms·260ms에 한 번씩 다시 맞춘다
+      (사진·글꼴·주소창 높이 변화로 자리가 늦게 잡혀도). 그 사이 사용자가
+      직접 스크롤하면 붙들지 않는다.
    ============================================================ */
-/* 창 스크롤 말고 따로 스크롤되는 상자 (세로: 메신저 대화, 가로: 필터 칩 줄) */
-const SCROLL_KEEP_SEL = '#view .chat-list, #view .chips, #view .tag-row, #view .tpl-row, #view .freq-chips';
-let lastRenderTab = null;   /* 마지막으로 그린 탭 — 같은 탭을 다시 그리는지 판단 */
+let lastRenderTab = null;      /* 마지막으로 그린 탭 — 같은 탭을 다시 그리는지 판단 */
+let pendingScroll = null;      /* 되돌리는 중인 자리 { top, inner, until, at } */
+let scrollOwnAt = 0;           /* 우리가 마지막으로 스크롤을 옮긴 시각 */
+let scrollSeen = 0;            /* 사용자가 마지막으로 있던 자리 */
+let scrollSeenAt = 0;
+let modalScroll = null;        /* 창을 열기 전 보던 자리 (body 스크롤 잠금을 풀 때 되돌린다) */
+
+/* 실제로 스크롤되는 상자들 — 창이 아닌 곳이 스크롤 주체일 수 있다 */
+function scrollRoots(){
+  const out = [];
+  const push = el => { if (el && out.indexOf(el) < 0) out.push(el); };
+  try { push(document.scrollingElement); } catch(e){}
+  try { push(document.documentElement); } catch(e){}
+  try { push(document.body); } catch(e){}
+  try { push(document.getElementById('view')); } catch(e){}
+  try { push(document.querySelector('.app')); } catch(e){}
+  return out;
+}
+function readTop(el){
+  try { return el ? Math.max(0, Math.round(el.scrollTop || 0) || 0) : 0; } catch(e){ return 0; }
+}
+function pageTop(){
+  let t = 0;
+  scrollRoots().forEach(el => { t = Math.max(t, readTop(el)); });
+  try { t = Math.max(t, Math.round(window.scrollY || window.pageYOffset || 0) || 0); } catch(e){}
+  return t;
+}
+/* 지금 내용에서 맨 아래까지 내려갈 수 있는 최대 위치 */
+function maxScrollTop(){
+  let h = 0, vh = 0;
+  try {
+    h = Math.max(
+      (document.documentElement && document.documentElement.scrollHeight) || 0,
+      (document.body && document.body.scrollHeight) || 0
+    );
+    const v = document.getElementById('view');
+    if (v && v.scrollHeight) h = Math.max(h, v.scrollHeight + (window.innerHeight || 0) - (v.clientHeight || 0));
+  } catch(e){}
+  try { vh = window.innerHeight || 0; } catch(e){}
+  return Math.max(0, Math.round(h - vh));
+}
+
+/* #view 안에서 따로 스크롤되는 상자(대화 목록·필터 칩 줄 등)는 다시 그리면
+   새로 만들어지므로 '태그.클래스 + 같은 것 중 몇 번째'로 다시 찾는다 */
+function scrollKey(el){
+  const cls = String(el.className || '').trim().split(/\s+/).filter(Boolean).join('.');
+  return el.tagName + (cls ? '.' + cls : '');
+}
+function innerOffsets(){
+  const out = [];
+  let all = [];
+  try { all = $$('#view *'); } catch(e){ return out; }
+  const ord = {};
+  all.forEach(el => {
+    const key = scrollKey(el);
+    const n = (ord[key] = (ord[key] || 0) + 1);
+    const top = readTop(el);
+    let left = 0;
+    try { left = Math.round(el.scrollLeft || 0) || 0; } catch(e){ left = 0; }
+    if (top || left) out.push({ key: key, n: n, top: top, left: left });
+  });
+  return out;
+}
+function applyInnerOffsets(list){
+  if (!list || !list.length) return;
+  let all = [];
+  try { all = $$('#view *'); } catch(e){ return; }
+  const want = {};
+  list.forEach(x => { want[x.key + '#' + x.n] = x; });
+  const ord = {};
+  all.forEach(el => {
+    const key = scrollKey(el);
+    const n = (ord[key] = (ord[key] || 0) + 1);
+    const w = want[key + '#' + n];
+    if (!w) return;
+    try {
+      if (w.top) el.scrollTop = w.top;
+      if (w.left) el.scrollLeft = w.left;
+    } catch(e){}
+  });
+}
 
 function scrollSnapshot(){
-  let top = 0;
-  try { top = Math.max(0, Math.round(window.scrollY || window.pageYOffset || 0) || 0); } catch(e){ top = 0; }
-  const inner = $$(SCROLL_KEEP_SEL).map(el => ({ top: el.scrollTop || 0, left: el.scrollLeft || 0 }));
-  return { top: top, inner: inner };
+  let top = pageTop();
+  /* 방금 내용이 짧아져 0으로 읽히면, 조금 전까지 보던 자리를 쓴다 */
+  if (!top && scrollSeen > 0 && Date.now() - scrollSeenAt < 2000) top = scrollSeen;
+  return { top: top, inner: innerOffsets(), until: Date.now() + 1500, at: Date.now() };
+}
+
+function applyScroll(snap){
+  if (!snap) return;
+  scrollOwnAt = Date.now();
+  scrollRoots().forEach(el => {
+    try { if (readTop(el) !== snap.top) el.scrollTop = snap.top; } catch(e){}
+  });
+  try { window.scrollTo({ top: snap.top, behavior: 'auto' }); }
+  catch(e){ try { window.scrollTo(0, snap.top); } catch(e2){} }
+  applyInnerOffsets(snap.inner);
 }
 
 function restoreScroll(snap){
   if (!snap) return;
-  const apply = () => {
-    try { window.scrollTo({ top: snap.top, behavior: 'auto' }); }
-    catch(e){ try { window.scrollTo(0, snap.top); } catch(e2){} }
-    $$(SCROLL_KEEP_SEL).forEach((el, i) => {
-      const was = snap.inner[i];
-      if (!was) return;
-      try {
-        if (was.top) el.scrollTop = was.top;
-        if (was.left) el.scrollLeft = was.left;
-      } catch(e){}
-    });
-  };
-  apply();
-  /* 사진·줄바꿈이 한 프레임 늦게 자리를 잡아도 한 번 더 맞춘다 */
-  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(apply);
+  const alive = () => pendingScroll === snap;
+  const again = () => { if (alive()) applyScroll(snap); };
+  applyScroll(snap);
+  /* 사진·글꼴·주소창 높이가 늦게 자리를 잡아도 제자리로 */
+  if (typeof requestAnimationFrame === 'function'){
+    requestAnimationFrame(() => { again(); requestAnimationFrame(again); });
+  }
+  setTimeout(again, 90);
+  setTimeout(again, 260);
+}
+
+/* 사용자가 직접 스크롤하면 되돌리기를 붙들지 않는다.
+   단, 내용이 짧아져서 목표 자리까지 갈 수 없게 되어 눌린 값은 사용자가 움직인 것이 아니다. */
+function noteScroll(){
+  try {
+    const y = pageTop();
+    if (pendingScroll){
+      if (Math.abs(y - pendingScroll.top) <= 2) return;                    /* 우리가 되돌린 자리 */
+      const maxT = maxScrollTop();
+      if (y < pendingScroll.top && maxT < pendingScroll.top && y >= maxT - 2) return;  /* 높이가 줄어 눌린 값 */
+      pendingScroll = null;                                                /* 사용자가 직접 옮겼다 */
+    }
+    scrollSeen = y;
+    scrollSeenAt = Date.now();
+  } catch(e){}
+}
+window.addEventListener('scroll', noteScroll, { capture: true, passive: true });
+/* 주소창이 접히고 펴져 화면 높이가 바뀌어도 되돌리는 중이면 다시 맞춘다 */
+window.addEventListener('resize', () => {
+  if (pendingScroll && Date.now() < pendingScroll.until) applyScroll(pendingScroll);
+});
+
+/* 창을 열 때 body 스크롤을 잠그면, 잠금을 푼 뒤 맨 위로 돌아가는 기기가 있다 */
+function lockBodyScroll(){
+  modalScroll = { top: pageTop(), inner: innerOffsets() };
+  document.body.style.overflow = 'hidden';
+}
+function unlockBodyScroll(){
+  document.body.style.overflow = '';
+  const s = modalScroll;
+  modalScroll = null;
+  if (!s) return;
+  const put = () => applyScroll(s);
+  put();
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(put);
+  setTimeout(put, 120);
 }
 
 function render(resetScroll){
   if (!isLoggedIn()){ renderLocked(); lastRenderTab = ui.tab; return; }
-  /* 같은 화면을 다시 그리는 것이면 지금 보던 자리를 기억해 둔다 */
-  const keep = (!resetScroll && lastRenderTab === ui.tab) ? scrollSnapshot() : null;
+  const view = $('#view');
+  const app = document.querySelector('.app');
+  /* 같은 화면을 다시 그리는 것이면 지금 보던 자리를 기억해 둔다.
+     바로 앞 render()가 아직 자리를 되돌리는 중이면 그 목표를 그대로 이어받는다 */
+  let keep = null;
+  if (!resetScroll && lastRenderTab === ui.tab){
+    const nowTop = pageTop();
+    if (pendingScroll && Date.now() < pendingScroll.until){
+      const maxT = maxScrollTop();
+      /* 같은 자리로 읽히거나, 내용이 짧아져 목표까지 갈 수 없게 눌린 값이면 처음 목표를 그대로 쓴다 */
+      if (Math.abs(nowTop - pendingScroll.top) <= 2 || (nowTop < pendingScroll.top && maxT < pendingScroll.top)) keep = pendingScroll;
+    }
+    if (!keep) keep = scrollSnapshot();
+  }
   document.body.classList.remove('locked');
   repairQpInDB(SYNC.state === 'live');
   if (!$$('.modal-wrap').length) navReplace({ tab: ui.tab });
@@ -3039,12 +3200,34 @@ function render(resetScroll){
     referrers: viewReferrers
   };
   document.body.classList.toggle('chatting', ui.tab === 'messenger');
-  $('#view').innerHTML = (views[ui.tab] || viewHome)();
+  /* 내용을 갈아 끼우는 동안 높이를 잠깐 고정 — 지운 줄 때문에 화면이 짧아져
+     스크롤이 0(맨 위)으로 눌리는 것을 막는다 */
+  const pinView = keep && view ? Math.max(0, Math.round(view.offsetHeight || 0)) : 0;
+  const pinApp = keep && app ? Math.max(0, Math.round(app.offsetHeight || 0)) : 0;
+  if (pinView && view) view.style.minHeight = pinView + 'px';
+  if (pinApp && app) app.style.minHeight = pinApp + 'px';
+  view.innerHTML = (views[ui.tab] || viewHome)();
   renderTabbar();
   if (ui.tab === 'sms') syncSmsSelection();
+  if (keep){
+    pendingScroll = keep;
+    restoreScroll(keep);
+  } else {
+    pendingScroll = null;
+    scrollRoots().forEach(el => { try { el.scrollTop = 0; } catch(e){} });
+    try { window.scrollTo({ top: 0, behavior: 'auto' }); } catch(e){}
+  }
   if (ui.tab === 'messenger'){ markChatRead(); scrollChatBottom(); }
-  else if (keep) restoreScroll(keep);
-  else window.scrollTo({ top: 0, behavior: 'auto' });
+  /* 높이 고정은 자리를 되돌린 뒤에 푼다 */
+  if ((pinView || pinApp) && (view || app)){
+    const unpin = () => {
+      if (view) view.style.minHeight = '';
+      if (app) app.style.minHeight = '';
+      if (pendingScroll && Date.now() < pendingScroll.until) applyScroll(pendingScroll);
+    };
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => requestAnimationFrame(unpin));
+    else setTimeout(unpin, 40);
+  }
   lastRenderTab = ui.tab;
   renderDirty = false;
 }
@@ -4214,7 +4397,7 @@ function closeTopModalFromUi(){
   const top = topModalEl();
   if (!top) return false;
   if (top.__closeNav) top.__closeNav();
-  else { top.remove(); document.body.style.overflow = ''; }
+  else { top.remove(); unlockBodyScroll(); }
   return true;
 }
 window.addEventListener('popstate', () => {
@@ -4222,7 +4405,7 @@ window.addEventListener('popstate', () => {
   const top = topModalEl();
   if (top){
     if (top.__closeFromHistory) top.__closeFromHistory();
-    else { top.remove(); document.body.style.overflow = ''; }
+    else { top.remove(); unlockBodyScroll(); }
     return;
   }
   const t = navStateTab();
@@ -4250,14 +4433,14 @@ function openModal(opts){
         '</div>') +
     '</div>';
   document.body.appendChild(wrap);
-  document.body.style.overflow = 'hidden';
+  lockBodyScroll();          /* 창을 열기 전 보던 자리를 기억 (body 잠금을 풀 때 맨 위로 가는 기기 대비) */
   const navToken = 'm' + (++NAV.seq);
   wrap.setAttribute('data-nav', navToken);
   navPush({ modal: navToken, tab: ui.tab });
   const close = (fromHistory) => {
     if (!wrap.parentNode) return;
     wrap.remove();
-    document.body.style.overflow = '';
+    unlockBodyScroll();
     if (renderDirty){
       renderDirty = false;
       setTimeout(() => { try { render(); } catch(e){} }, 0);
@@ -6287,9 +6470,18 @@ function billAmount(s){
   if (cr > 0) return Math.round(hoursOf(s) * cr);
   return basePayOf(s);
 }
+/* ============================================================
+   장부 — 직접 적는 수입 · 지출만
+   출역 기록(wf_logs)에서 매출·인건비·수당을 끌어오지 않는다.
+   관리자가 장부 탭에서 직접 등록한 수입·지출만 집계하고,
+   순수익 = 총 수입 − 총 지출 로 계산한다.
+   ============================================================ */
+const INCOME_CATS = ['현장 수입', '용역 수입', '기타 수입'];
+function expenseKind(e){ return (e && e.kind === 'income') ? 'income' : 'expense'; }
+function kindLabel(k){ return k === 'income' ? '수입' : '지출'; }
+
 function ledgerMonths(){
   const set = {};
-  (DB.shifts || []).forEach(s => { const k = monthKeyOf(s); if (k) set[k] = 1; });
   (DB.expenses || []).forEach(e => { const k = monthKeyOf(e); if (k) set[k] = 1; });
   return Object.keys(set).sort().reverse();
 }
@@ -6302,162 +6494,134 @@ function ledgerPeriod(){
 }
 const inPeriod = (x, p) => p === 'all' || monthKeyOf(x) === p;
 
+/* 장부에 들어가는 내역 — 수동으로 적은 수입·지출뿐 */
+function ledgerEntries(){
+  return (DB.expenses || []).map(e => Object.assign({}, e, { kind: expenseKind(e) }));
+}
+
+function ledgerRowHTML(e){
+  const kind = expenseKind(e);
+  const inc = kind === 'income';
+  return '<div class="rec' + (inc ? '' : ' is-done') + '">' +
+    '<div class="rec-top">' +
+      '<div class="rec-who"><span class="led-badge ' + (inc ? 'in' : 'out') + '">' + kindLabel(kind) + '</span>' +
+        esc(e.category || kindLabel(kind)) + '</div>' +
+      '<div class="rec-amt ' + (inc ? 'money-in' : 'money-out') + '">' + (inc ? '+' : '−') + won(e.amount) + '</div>' +
+    '</div>' +
+    (e.memo ? '<div class="rec-memo">' + esc(e.memo) + '</div>' : '') +
+    '<div class="rec-foot">' +
+      '<span class="rec-by">' + byBadge(e.createdBy) +
+        (e.updatedBy && e.updatedBy !== e.createdBy ? ' ' + byBadge(e.updatedBy, '수정') : '') + '</span>' +
+      '<span class="rec-acts">' +
+        '<button class="mini" data-act="edit-expense" data-id="' + e.id + '">수정</button>' +
+        '<button class="mini danger" data-act="del-expense" data-id="' + e.id + '">삭제</button>' +
+      '</span>' +
+    '</div>' +
+  '</div>';
+}
+
 function viewLedger(){
   const months = ledgerMonths();
   const p = ledgerPeriod();
-  const shifts = (DB.shifts || []).filter(s => inPeriod(s, p));
-  const exps = (DB.expenses || []).filter(e => inPeriod(e, p))
-    .slice().sort((a, b) => String(b.date).localeCompare(String(a.date)));
-
-  const rev = shifts.reduce((a, s) => a + billAmount(s), 0);
-  const labor = shifts.reduce((a, s) => a + num(s.wage), 0);
-  const spend = exps.reduce((a, e) => a + num(e.amount), 0);
-  const net = rev - labor - spend;
-  const dueC = shifts.filter(s => !s.clientPaid).reduce((a, s) => a + billAmount(s), 0);
-  const dueW = shifts.filter(s => !s.workerPaid).reduce((a, s) => a + num(s.wage), 0);
-  const totalHours = shifts.reduce((a, s) => a + hoursOf(s), 0);
-  const allowSum = shifts.reduce((a, s) => a + allowanceOf(s), 0);
+  const list = ledgerEntries().filter(e => inPeriod(e, p));
+  const incRows = list.filter(e => e.kind === 'income');
+  const outRows = list.filter(e => e.kind === 'expense');
+  const incSum = incRows.reduce((a, e) => a + num(e.amount), 0);
+  const outSum = outRows.reduce((a, e) => a + num(e.amount), 0);
+  const net = incSum - outSum;
 
   let monthOpts = '<option value="current"' + (ui.ledgerMonth === 'current' ? ' selected' : '') + '>이번 달 (' + todayISO().slice(0, 7) + ')</option>';
   monthOpts += months.map(m => '<option value="' + m + '"' + (ui.ledgerMonth === m ? ' selected' : '') + '>' +
     m.slice(0, 4) + '년 ' + Number(m.slice(5, 7)) + '월</option>').join('');
   monthOpts += '<option value="all"' + (ui.ledgerMonth === 'all' ? ' selected' : '') + '>전체 기간</option>';
 
-  const byClient = {};
-  shifts.forEach(s => {
-    const key = (s.clientId && s.clientId !== '__custom') ? s.clientId : ('x:' + (s.place || '직접 입력'));
-    if (!byClient[key]) byClient[key] = {
-      id: s.clientId || '', name: (clientById(s.clientId) || {}).name || s.place || '직접 입력', rows: []
-    };
-    byClient[key].rows.push(s);
+  const filter = (ui.ledgerKind === 'income' || ui.ledgerKind === 'expense') ? ui.ledgerKind : 'all';
+  const shown = list.filter(e => filter === 'all' || e.kind === filter)
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)) ||
+      String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+
+  /* 날짜별로 묶어서 바로 보여 준다 */
+  const groups = [];
+  shown.forEach(e => {
+    const g = groups[groups.length - 1];
+    if (!g || g.date !== e.date) groups.push({ date: e.date, rows: [e] });
+    else g.rows.push(e);
   });
-  const clientRows = Object.keys(byClient).map(k => {
-    const g = byClient[k];
-    const billed = g.rows.reduce((a, s) => a + billAmount(s), 0);
-    const paid = g.rows.filter(s => s.clientPaid).reduce((a, s) => a + billAmount(s), 0);
-    const unpaid = g.rows.filter(s => !s.clientPaid);
-    return { key: k, id: g.id, name: g.name, billed: billed, paid: paid, due: billed - paid, unpaid: unpaid, n: g.rows.length, rows: g.rows };
-  }).sort((a, b) => b.due - a.due || b.billed - a.billed);
-
-  const clientHTML = clientRows.length ? clientRows.map(r => {
-    const rate = clientRate(r.id);
-    const unpaidIds = r.unpaid.map(s => s.id).join(',');
-    return '<div class="card" style="margin-bottom:8px;padding:12px 14px">' +
-      '<div class="rec-top"><div class="rec-who" style="font-size:13.5px">' + esc(r.name) +
-        ' <span class="badge cnt">' + r.n + '건</span></div>' +
-        '<div class="rec-amt">' + won(r.billed) + '<small>청구</small></div></div>' +
-      '<div class="rec-meta">입금 ' + won(r.paid) + ' · <b style="color:' + (r.due > 0 ? '#c2410c' : '#15803d') + '">미수금 ' + won(r.due) + '</b></div>' +
-      '<div class="rec-meta" style="margin-top:2px">' + byBadgeOfRows(r.rows) + '</div>' +
-      '<div class="row2" style="margin-top:8px;gap:6px">' +
-        (r.unpaid.length ? '<button class="mini ok" data-act="ledger-pay-client" data-ids="' + unpaidIds + '">입금 완료</button>' : '<span class="muted" style="font-size:11.5px;align-self:center">입금 완료</span>') +
-        (r.unpaid.length ? '<button class="mini" data-act="ledger-bill" data-ids="' + unpaidIds + '">계좌 문자</button>' : '') +
-      '</div>' +
-      (r.id && r.id !== '__custom' ? '<label class="f" style="margin-top:8px"><span style="font-size:11px">청구 시급 (이 기기 기준 · 비우면 수당 뺀 근무 급여)</span>' +
-        '<input type="number" step="1000" min="0" data-lrate="' + esc(r.id) + '" value="' + (rate ? rate : '') + '" placeholder="예: 60000"></label>' : '') +
-      '</div>';
-  }).join('') : '<div class="card muted" style="font-size:12.5px">이 기간에 근무 기록이 없습니다.</div>';
-
-  const byWorker = {};
-  shifts.forEach(s => {
-    const key = s.workerId || ('x:' + (s.workerName || ''));
-    if (!byWorker[key]) byWorker[key] = {
-      id: s.workerId || '', name: (workerById(s.workerId) || {}).name || s.workerName || '삭제된 인력', rows: []
-    };
-    byWorker[key].rows.push(s);
-  });
-  const workerRows = Object.keys(byWorker).map(k => {
-    const g = byWorker[k];
-    const pay = g.rows.reduce((a, s) => a + num(s.wage), 0);
-    const paid = g.rows.filter(s => s.workerPaid).reduce((a, s) => a + num(s.wage), 0);
-    const unpaid = g.rows.filter(s => !s.workerPaid);
-    return { key: k, name: g.name, hours: g.rows.reduce((a, s) => a + hoursOf(s), 0), pay: pay, paid: paid, due: pay - paid, unpaid: unpaid, n: g.rows.length,
-      allow: g.rows.reduce((a, s) => a + allowanceOf(s), 0), rows: g.rows };
-  }).sort((a, b) => b.due - a.due || b.pay - a.pay);
-
-  const workerHTML = workerRows.length ? workerRows.map(r => {
-    const unpaidIds = r.unpaid.map(s => s.id).join(',');
-    return '<div class="card" style="margin-bottom:8px;padding:12px 14px">' +
-      '<div class="rec-top"><div class="rec-who" style="font-size:13.5px">' + esc(r.name) +
-        ' <span class="badge cnt">' + r.n + '건</span></div>' +
-        '<div class="rec-amt">' + won(r.pay) + '<small>일당 ' + r.hours + '시간</small></div></div>' +
-      '<div class="rec-meta">지급 ' + won(r.paid) + ' · <b style="color:' + (r.due > 0 ? '#c2410c' : '#15803d') + '">미지급 ' + won(r.due) + '</b>' +
-        (r.allow ? ' · 수당 ' + won(r.allow) + ' 포함' : '') + '</div>' +
-      '<div class="rec-meta" style="margin-top:2px">' + byBadgeOfRows(r.rows) + '</div>' +
-      (r.unpaid.length ? '<div class="row2" style="margin-top:8px;gap:6px">' +
-        '<button class="mini ok" data-act="ledger-pay-worker" data-ids="' + unpaidIds + '">지급 완료</button></div>' : '') +
-      '</div>';
-  }).join('') : '<div class="card muted" style="font-size:12.5px">이 기간에 근무 기록이 없습니다.</div>';
-
-  const expHTML = (exps.length ? exps.map(e =>
-    '<div class="card" style="margin-bottom:6px;padding:10px 12px">' +
-      '<div class="rec-top"><div class="rec-who" style="font-size:13px">' + esc(e.category || '지출') +
-        ' <span class="badge cnt">' + esc(fmtDate(e.date)) + '</span></div>' +
-        '<div class="rec-amt">' + won(e.amount) + '</div></div>' +
-      (e.memo ? '<div class="rec-memo">' + esc(e.memo) + '</div>' : '') +
-      '<div class="rec-foot"><span class="rec-by">' + byBadge(e.createdBy) +
-        (e.updatedBy && e.updatedBy !== e.createdBy ? ' ' + byBadge(e.updatedBy, '수정') : '') + '</span>' +
-        '<span class="rec-acts">' +
-          '<button class="mini" data-act="edit-expense" data-id="' + e.id + '">수정</button>' +
-          '<button class="mini danger" data-act="del-expense" data-id="' + e.id + '">삭제</button>' +
-        '</span></div>' +
-    '</div>').join('')
-    : '<div class="card muted" style="font-size:12.5px">이 기간에 기록한 지출이 없습니다.</div>');
+  const groupsHTML = groups.length ? groups.map(g => {
+    const gi = g.rows.filter(e => e.kind === 'income').reduce((a, e) => a + num(e.amount), 0);
+    const go = g.rows.filter(e => e.kind === 'expense').reduce((a, e) => a + num(e.amount), 0);
+    return '<div class="daygroup">' +
+      '<div class="dayhead"><b>' + esc(fmtDate(g.date)) + '</b><span>' +
+        (gi ? '수입 ' + won(gi) : '') + (gi && go ? ' · ' : '') + (go ? '지출 ' + won(go) : '') +
+      '</span></div>' +
+      g.rows.map(ledgerRowHTML).join('') +
+    '</div>';
+  }).join('') : '<div class="empty"><span class="big">📒</span>' +
+      (filter === 'income' ? '이 기간에 적은 수입이 없습니다.' : filter === 'expense' ? '이 기간에 적은 지출이 없습니다.' : '이 기간에 적은 내역이 없습니다.') +
+      '<br><span style="font-size:12px;color:#8b95a1">아래 <b>＋ 수입</b> · <b>＋ 지출</b>로 직접 적으세요.</span></div>';
 
   return '' +
   '<div class="sumbar">' +
-    '<div class="sumcell"><div class="k">📒 장부</div>' +
-      '<div class="v" style="font-size:20px">' + won(net) + '</div>' +
-      '<div class="n">순수익 = 매출 ' + won(rev) + ' − 인건비 ' + won(labor) + ' − 지출 ' + won(spend) + '</div></div>' +
-    '<div class="sumcell in wait"><div class="k">🏢 미수금</div><div class="v">' + won(dueC) + '</div>' +
-      '<div class="n">거래처 입금 대기</div></div>' +
-    '<div class="sumcell out wait"><div class="k">👷 미지급</div><div class="v">' + won(dueW) + '</div>' +
-      '<div class="n">인력 지급 대기</div></div>' +
+    '<div class="sumcell in"><div class="k">💵 총 수입</div><div class="v">' + won(incSum) + '</div>' +
+      '<div class="n">' + incRows.length + '건</div></div>' +
+    '<div class="sumcell out"><div class="k">🧾 총 지출</div><div class="v">' + won(outSum) + '</div>' +
+      '<div class="n">' + outRows.length + '건</div></div>' +
+    '<div class="sumcell wide ' + (net >= 0 ? 'in' : 'out') + '"><div class="k">📒 순수익</div>' +
+      '<div class="v">' + won(net) + '</div><div class="n">수입 − 지출</div></div>' +
   '</div>' +
 
-  '<div class="row2" style="margin:10px 0 4px;gap:8px">' +
+  '<div class="row2" style="margin:10px 0 6px;gap:8px">' +
     '<label class="f" style="margin:0"><span>기간</span><select id="ledgerMonth">' + monthOpts + '</select></label>' +
-    '<button class="btn ghost" data-act="add-expense" style="align-self:end;height:42px">＋ 지출 추가</button>' +
+    '<div style="display:flex;gap:6px;align-self:end">' +
+      '<button class="btn primary" data-act="add-income" style="height:42px;white-space:nowrap">＋ 수입</button>' +
+      '<button class="btn ghost" data-act="add-expense" style="height:42px;white-space:nowrap">＋ 지출</button>' +
+    '</div>' +
   '</div>' +
 
-  '<h2 class="sec">이 기간 요약</h2>' +
-  '<div class="grid2">' +
-    '<div class="stat"><span class="stat-k">🏢 총 매출 (거래처 청구)</span><span class="stat-v sm money-in">' + won(rev) + '</span><span class="stat-s in">' + shifts.length + '건 · ' + totalHours + '시간</span></div>' +
-    '<div class="stat"><span class="stat-k">👷 총 인건비 (인력 지급)</span><span class="stat-v sm money-out">' + won(labor) + '</span><span class="stat-s money">' + shifts.length + '건' + (allowSum ? ' · 수당 ' + won(allowSum) : '') + '</span></div>' +
-    '<div class="stat"><span class="stat-k">🧾 일일 지출 합계</span><span class="stat-v sm">' + won(spend) + '</span><span class="stat-s">' + exps.length + '건</span></div>' +
-    '<div class="stat"><span class="stat-k">💰 실제 순수익</span><span class="stat-v sm ' + (net >= 0 ? 'money-in' : 'money-out') + '">' + won(net) + '</span><span class="stat-s">매출 − 인건비 − 지출</span></div>' +
+  '<div class="chips">' +
+    '<button class="chip ' + (filter === 'all' ? 'on' : '') + '" data-act="ledger-kind" data-val="all">전체 ' + list.length + '</button>' +
+    '<button class="chip ' + (filter === 'income' ? 'on' : '') + '" data-act="ledger-kind" data-val="income">수입 ' + incRows.length + '</button>' +
+    '<button class="chip ' + (filter === 'expense' ? 'on' : '') + '" data-act="ledger-kind" data-val="expense">지출 ' + outRows.length + '</button>' +
   '</div>' +
-  '<p class="form-note">거래처 <b>청구 시급</b>을 넣으면 매출과 인건비 차이가 순수익에 잡힙니다. 청구액은 <b>근무시간 × 청구 시급</b>으로만 계산하고, 추가 수당은 넣지 않습니다(인건비에만 포함). 청구 시급을 비우면 수당을 뺀 근무 급여를 청구한 것으로 봅니다.</p>' +
 
-  '<h2 class="sec">거래처별 장부</h2>' + clientHTML +
-
-  '<h2 class="sec">인력별 장부</h2>' + workerHTML +
-
-  '<h2 class="sec">일일 지출 <span class="muted" style="font-size:12px;font-weight:700">' + won(spend) + '</span></h2>' + expHTML +
-  '<p class="foot">지출은 일자별로 기록해 그 달 순수익에 반영됩니다.</p>';
+  '<h2 class="sec">내역 <span class="muted" style="font-size:12px;font-weight:700">수입 ' + won(incSum) + ' · 지출 ' + won(outSum) + '</span></h2>' +
+  groupsHTML +
+  '<p class="foot">장부는 여기서 직접 적은 <b>수입</b>과 <b>지출</b>만 기록합니다. 출역·근무수당은 장부에 들어가지 않습니다.</p>';
 }
 
-function openExpenseModal(id){
+/* 수입 · 지출 등록/수정 창 */
+function openExpenseModal(id, kindArg){
   const e = id ? (DB.expenses || []).find(x => x.id === id) : null;
-  const cats = EXPENSE_CATS.slice();
-  if (e && e.category && cats.indexOf(e.category) < 0) cats.push(e.category);
+  const kind = e ? expenseKind(e) : (kindArg === 'income' ? 'income' : 'expense');
+  const catsOf = k => (k === 'income' ? INCOME_CATS : EXPENSE_CATS).slice();
+  const catOpts = (k, sel) => {
+    const cats = catsOf(k);
+    if (sel && cats.indexOf(sel) < 0) cats.push(sel);
+    return cats.map(c => '<option' + (sel === c ? ' selected' : '') + '>' + esc(c) + '</option>').join('');
+  };
   const body =
+    '<label class="f"><span>구분</span><select id="exKind">' +
+      '<option value="income"' + (kind === 'income' ? ' selected' : '') + '>수입</option>' +
+      '<option value="expense"' + (kind === 'expense' ? ' selected' : '') + '>지출</option>' +
+    '</select></label>' +
     '<label class="f"><span>날짜</span><input type="date" id="exDate" value="' + esc(e ? e.date : todayISO()) + '"></label>' +
-    '<label class="f"><span>항목</span><select id="exCat">' + cats.map(c =>
-      '<option' + (e && e.category === c ? ' selected' : '') + '>' + esc(c) + '</option>').join('') + '</select></label>' +
+    '<label class="f"><span>분류</span><select id="exCat">' + catOpts(kind, e ? e.category : '') + '</select></label>' +
     '<label class="f"><span>금액(원)</span><input type="number" id="exAmount" step="1000" min="0" value="' + (e ? num(e.amount) : '') + '" placeholder="예: 45000"></label>' +
-    '<label class="f"><span>메모</span><input type="text" id="exMemo" value="' + esc(e ? e.memo || '' : '') + '" placeholder="예: 표선 현장 점심 4명"></label>';
-  openModal({
-    title: e ? '지출 수정' : '지출 추가',
-    sub: '일일 지출을 기록하면 그 달 순수익에 반영됩니다',
+    '<label class="f"><span>내용</span><input type="text" id="exMemo" value="' + esc(e ? e.memo || '' : '') + '" placeholder="예: 표선 현장 11월분"></label>';
+  const m = openModal({
+    title: e ? '장부 수정' : (kind === 'income' ? '수입 등록' : '지출 등록'),
+    sub: '직접 적는 수입·지출입니다 (출역·수당과 무관)',
     body,
-    submitLabel: e ? '수정 저장' : '추가',
+    submitLabel: e ? '수정 저장' : '등록',
     onSubmit: (wrap, close) => {
+      const kk = $('#exKind', wrap).value === 'income' ? 'income' : 'expense';
       const date = $('#exDate', wrap).value;
       const amount = num($('#exAmount', wrap).value);
       if (!date){ toast('날짜를 선택해 주세요'); return; }
       if (!(amount > 0)){ toast('금액을 입력해 주세요'); return; }
       const rec = e || { id: uid(), createdAt: new Date().toISOString(), createdBy: curAdmin().id };
       if (e){ rec.updatedBy = curAdmin().id; rec.updatedAt = new Date().toISOString(); }
+      rec.kind = kk;
       rec.date = date;
       rec.category = $('#exCat', wrap).value;
       rec.amount = Math.round(amount);
@@ -6467,9 +6631,21 @@ function openExpenseModal(id){
       syncExpense(rec);
       close();
       render();
-      toast(e ? '지출을 수정했습니다' : '지출을 추가했습니다 (' + won(rec.amount) + ')');
+      toast((e ? '' : '') + kindLabel(kk) + (e ? '을 수정했습니다' : '을 등록했습니다') + ' (' + won(rec.amount) + ')');
     }
   });
+  /* 구분을 바꾸면 분류 목록도 바뀐다 */
+  const wrap = m && m.wrap;
+  const sel = wrap && $('#exKind', wrap);
+  if (sel){
+    sel.addEventListener('change', () => {
+      const cat = $('#exCat', wrap);
+      if (cat) cat.innerHTML = catOpts(sel.value === 'income' ? 'income' : 'expense', '');
+      const hd = $('.modal-hd h2', wrap);
+      if (hd && !e) hd.textContent = sel.value === 'income' ? '수입 등록' : '지출 등록';
+    });
+  }
+  return m;
 }
 
 /* ---------- 설정 ---------- */
@@ -6550,6 +6726,7 @@ function openSettings(){
       '<dt>문자 발송</dt><dd>' + DB.messages.length + '회</dd>' +
       '<dt>메신저</dt><dd>' + DB.chat.length + '건' + (unreadChat() ? ' · 안 읽음 ' + unreadChat() + '건' : '') + '</dd>' +
       '<dt>저장 위치</dt><dd>' + (SYNC.state === 'live' ? 'Supabase 실시간 DB + 이 기기' : '이 기기(localStorage)') + '</dd>' +
+      '<dt>화면 버전</dt><dd>' + esc(APP_BUILD) + '</dd>' +
     '</dl>' +
     '<div class="row2" style="margin-bottom:10px">' +
       '<button type="button" class="btn ghost" data-act="import-contacts" data-kind="worker">📇 인력 연락처</button>' +
@@ -6738,8 +6915,17 @@ document.addEventListener('click', ev => {
       break;
     }
 
+    case 'add-income':
+      openExpenseModal(null, 'income');
+      break;
+
     case 'add-expense':
-      openExpenseModal(null);
+      openExpenseModal(null, 'expense');
+      break;
+
+    case 'ledger-kind':
+      ui.ledgerKind = el.dataset.val || 'all';
+      render();
       break;
 
     case 'edit-expense':
@@ -6749,12 +6935,13 @@ document.addEventListener('click', ev => {
     case 'del-expense': {
       const ex = (DB.expenses || []).find(x => x.id === id);
       if (!ex) break;
-      confirmModal('지출 삭제', ex.date + ' · ' + (ex.category || '지출') + ' · ' + won(ex.amount) + ' 기록을 지웁니다. 삭제하면 되돌릴 수 없습니다.',
+      const kl = kindLabel(expenseKind(ex));
+      confirmModal(kl + ' 삭제', ex.date + ' · ' + (ex.category || kl) + ' · ' + won(ex.amount) + ' 기록을 지웁니다. 삭제하면 되돌릴 수 없습니다.',
         '삭제', () => {
           DB.expenses = (DB.expenses || []).filter(x => x.id !== id);
           dbDelete('expenses', id);
           saveDB(); render();
-          toast('지출을 삭제했습니다');
+          toast(kl + '을 삭제했습니다');
         });
       break;
     }

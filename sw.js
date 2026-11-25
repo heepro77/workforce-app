@@ -1,7 +1,7 @@
 /* SH 인력관리 — 홈 화면 설치(PWA)용 서비스 워커.
    화면(index.html)은 항상 네트워크에서 먼저 받고, 오프라인일 때만 마지막으로 받은 화면을 보여 준다.
    캐시 우선이 아니므로 배포한 새 화면이 바로 반영된다. */
-const CACHE = 'sh-wf-v1';
+const CACHE = 'sh-wf-v2';
 const SHELL = ['./', './index.html', './icon-192.png', './manifest.webmanifest'];
 
 self.addEventListener('install', event => {
@@ -26,7 +26,7 @@ self.addEventListener('fetch', event => {
 
   if (req.mode === 'navigate') {
     event.respondWith(
-      fetch(req)
+      fetch(req, { cache: 'no-store' })     /* 새로 배포한 화면이 바로 오도록 HTTP 캐시도 건너뛴다 */
         .then(res => {
           const copy = res.clone();
           caches.open(CACHE).then(c => c.put('./index.html', copy)).catch(() => {});

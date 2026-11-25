@@ -92,6 +92,7 @@ create table if not exists public.wf_sms (
 
 create table if not exists public.wf_expenses (
   id text primary key,
+  kind text default 'expense',
   date text,
   category text,
   amount integer,
@@ -101,6 +102,8 @@ create table if not exists public.wf_expenses (
 );
 
 alter table public.wf_expenses add column if not exists updated_by text;
+-- 장부: 직접 적는 수입(income) / 지출(expense)
+alter table public.wf_expenses add column if not exists kind text default 'expense';
 
 -- ------------------------------------------------------------
 -- 관리자 계정: 이름·역할·비밀번호 해시 (관리자 3명 기기에서 함께 쓴다)
