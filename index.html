@@ -596,7 +596,22 @@
   }
   .on-ask-msg b{color:var(--brand);font-weight:900}
   .on-ask-msg #onAskTime{font-variant-numeric:tabular-nums;font-size:17px;color:#1c43c9}
+  .on-ask .on-ask-f{margin:2px 0 9px}
+  .on-ask .on-ask-f input{font-size:17px;font-weight:800;font-variant-numeric:tabular-nums;text-align:center;padding:11px 12px}
   .on-ask .form-note{margin:0;line-height:1.55}
+
+  /* ---------- 근무 내역 창 ---------- */
+  .wh{padding:2px 0 4px}
+  .wh-sum{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:2px 0 10px}
+  .wh-cell{background:#f7f8fa;border:1px solid var(--line);border-radius:10px;padding:7px 4px;text-align:center}
+  .wh-cell b{display:block;font-size:13px;font-weight:900;letter-spacing:-.3px}
+  .wh-cell span{display:block;font-size:10.5px;font-weight:700;color:var(--muted);margin-top:1px}
+  .wh-h{font-size:11.5px;font-weight:900;color:var(--muted);margin:12px 2px 6px}
+  .wh-h i{font-style:normal;font-weight:800;opacity:.8}
+  .wh-row{border:1px solid var(--line);border-radius:11px;background:#fff;padding:9px 11px;margin-bottom:7px}
+  .wh-line{font-size:12.5px;font-weight:800;color:#1b1f27;display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+  .wh-line2{font-size:11.5px;font-weight:700;color:var(--muted);margin-top:3px}
+  .wh-btns{display:flex;gap:5px;flex-wrap:wrap;margin-top:7px}
 
   /* ---------- 기록 작성자 배지 ---------- */
   .by-badge{
@@ -2846,8 +2861,47 @@ function renderTabbar(){
   refreshChatBadge();
 }
 
-function render(){
-  if (!isLoggedIn()){ renderLocked(); return; }
+/* ============================================================
+   스크롤 유지
+   화면을 다시 그릴 때(내가 삭제·추가·수정·출근 토글한 뒤, 다른 관리자의
+   변경이 실시간으로 들어왔을 때, 화면에 돌아와 다시 맞췄을 때) 보던 자리가
+   맨 위로 튀지 않게, 그리기 직전 위치를 기억했다가 그대로 되돌린다.
+   탭을 옮길 때만 맨 위로 올린다.
+   ============================================================ */
+/* 창 스크롤 말고 따로 스크롤되는 상자 (세로: 메신저 대화, 가로: 필터 칩 줄) */
+const SCROLL_KEEP_SEL = '#view .chat-list, #view .chips, #view .tag-row, #view .tpl-row, #view .freq-chips';
+let lastRenderTab = null;   /* 마지막으로 그린 탭 — 같은 탭을 다시 그리는지 판단 */
+
+function scrollSnapshot(){
+  let top = 0;
+  try { top = Math.max(0, Math.round(window.scrollY || window.pageYOffset || 0) || 0); } catch(e){ top = 0; }
+  const inner = $$(SCROLL_KEEP_SEL).map(el => ({ top: el.scrollTop || 0, left: el.scrollLeft || 0 }));
+  return { top: top, inner: inner };
+}
+
+function restoreScroll(snap){
+  if (!snap) return;
+  const apply = () => {
+    try { window.scrollTo({ top: snap.top, behavior: 'auto' }); }
+    catch(e){ try { window.scrollTo(0, snap.top); } catch(e2){} }
+    $$(SCROLL_KEEP_SEL).forEach((el, i) => {
+      const was = snap.inner[i];
+      if (!was) return;
+      try {
+        if (was.top) el.scrollTop = was.top;
+        if (was.left) el.scrollLeft = was.left;
+      } catch(e){}
+    });
+  };
+  apply();
+  /* 사진·줄바꿈이 한 프레임 늦게 자리를 잡아도 한 번 더 맞춘다 */
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(apply);
+}
+
+function render(resetScroll){
+  if (!isLoggedIn()){ renderLocked(); lastRenderTab = ui.tab; return; }
+  /* 같은 화면을 다시 그리는 것이면 지금 보던 자리를 기억해 둔다 */
+  const keep = (!resetScroll && lastRenderTab === ui.tab) ? scrollSnapshot() : null;
   document.body.classList.remove('locked');
   repairQpInDB(SYNC.state === 'live');
   if (!$$('.modal-wrap').length) navReplace({ tab: ui.tab });
@@ -2861,7 +2915,9 @@ function render(){
   renderTabbar();
   if (ui.tab === 'sms') syncSmsSelection();
   if (ui.tab === 'messenger'){ markChatRead(); scrollChatBottom(); }
+  else if (keep) restoreScroll(keep);
   else window.scrollTo({ top: 0, behavior: 'auto' });
+  lastRenderTab = ui.tab;
   renderDirty = false;
 }
 
@@ -2878,14 +2934,16 @@ function viewHome(){
   const recent = DB.shifts.slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 3);
   const msgs = DB.messages.slice().sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 2);
 
-  const todayPills = todays.length
-    ? todays.map(s => {
+  /* 상단 알약은 지금 근무중(ON)인 건만 — 이미 마감된 지난 회차는 근무·입금 탭에서 본다 */
+  const todayOpen = todays.filter(isOpenShift);
+  const todayPills = todayOpen.length
+    ? todayOpen.map(s => {
         const tw = workerById(s.workerId);
         return '<button class="pill" data-act="today-edit" data-id="' + s.id + '">' + esc(wName(s)) +
           (tw ? ageGroupBadge(tw) : '') +
           ' · ' + esc(onOffText(s)) + (allowanceOf(s) ? ' · 수당 ' + won(allowanceOf(s)) : '') + (s.place ? ' · ' + esc(s.place) : '') + ' ✎</button>';
       }).join('')
-    : '<span class="pill">아직 등록된 출역이 없습니다</span>';
+    : '<span class="pill">지금 근무중(ON)인 출역이 없습니다</span>';
 
   const onN = DB.workers.filter(w => todays.some(s => s.workerId === w.id)).length;
   const busyN = DB.workers.filter(w => todays.some(s => s.workerId === w.id && isOpenShift(s))).length;
@@ -2933,24 +2991,7 @@ function viewHome(){
               ? '출근 완료 · 근무 기록 없음'
               : (w.status === RESERVE ? '예비 인력 · 오늘 미출역' : '오늘 미출역')));
 
-    /* 완료된 건들을 1차·2차… 로 차곡차곡 */
-    const doneList = done.length
-      ? '<div class="rs-list">' + done.map((s, i) =>
-          '<div class="rs">' +
-            '<span class="rs-n">' + (i + 1) + '차</span>' +
-            '<span class="rs-t">' + esc(onOffText(s)) + '</span>' +
-            '<span class="rs-b">' +
-              '<button class="mini" data-act="billing-sms" data-id="' + s.id + '">계좌 문자</button>' +
-              '<button class="mini" data-act="today-edit" data-id="' + s.id + '">시간</button>' +
-              '<button class="mini danger" data-act="del-shift" data-id="' + s.id + '">삭제</button>' +
-            '</span>' +
-            '<span class="rs-m">' + hoursLabel(s) + (isAdjusted(s) ? ' (고침)' : '') +
-              (num(s.wage) ? ' · ' + won(s.wage) + (allowanceOf(s) ? ' (수당 ' + won(allowanceOf(s)) + ')' : '') : ' · 일당 미정') +
-              (s.place ? ' · ' + esc(s.place) : '') +
-              ' ' + byBadge(s.createdBy) + '</span>' +
-          '</div>').join('') + '</div>'
-      : '';
-
+    /* 오늘 출역은 현 상황만 — 마감된 지난 회차 기록은 근무·입금 탭·장부에서 본다 */
     const attLine = att
       ? '<div class="roster-att">' +
           '<span class="badge att">출근 완료</span>' +
@@ -2969,13 +3010,13 @@ function viewHome(){
           attLine +
           (open ? '<div class="roster-by">' + byBadge(open.createdBy) + '</div>' : '') +
           '<div class="roster-acts">' + attBtn +
+            '<button class="mini" data-act="worker-shifts" data-id="' + w.id + '">근무 내역</button>' +
             (open ? '<button class="mini" data-act="today-edit" data-id="' + open.id + '">시간·거래처</button>' : '') +
             (open ? '<button class="mini danger" data-act="del-shift" data-id="' + open.id + '">삭제</button>' : '') +
           '</div>' +
         '</div>' +
         '<button class="switch' + (on ? ' on' : '') + '" data-act="today-toggle" data-worker="' + w.id + '" aria-pressed="' + (on ? 'true' : 'false') + '" aria-label="' + esc(w.name) + ' 오늘 출역 ' + (on ? 'ON' : 'OFF') + '">' + (on ? 'ON' : 'OFF') + '</button>' +
       '</div>' +
-      doneList +
     '</div>';
   };
 
@@ -3243,6 +3284,7 @@ function workerCardHTML(w){
     '</div>' +
     '<div class="wcard-foot">' +
       '<a class="mini" href="tel:' + esc(unpad(w.phone)) + '">전화</a>' +
+      '<button class="mini" data-act="worker-shifts" data-id="' + w.id + '">근무 내역</button>' +
       (freq.length ? '<button class="mini" data-act="worker-stats" data-id="' + w.id + '">거래처 통계 ' + freq.length + '곳</button>' : '') +
       '<button class="mini" data-act="edit-worker" data-id="' + w.id + '">수정</button>' +
       '<button class="mini danger" data-act="del-worker" data-id="' + w.id + '">삭제</button>' +
@@ -3352,6 +3394,70 @@ function openWorkerStats(workerId){
     submitLabel: '닫기',
     cancelLabel: false,
     onSubmit: (wrap, close) => close()
+  });
+}
+
+/* ---------- 인력별 근무 내역 (오늘 출역에서 숨긴 지난 회차까지) ---------- */
+function closeTopModal(){
+  const top = $$('.modal-wrap').pop();
+  if (!top) return;
+  if (top.__closeNav) top.__closeNav();
+  else top.remove();
+}
+function shiftHistoryRow(s){
+  const open = isOpenShift(s);
+  const paid = !!(s.clientPaid && s.workerPaid);
+  return '<div class="wh-row">' +
+    '<div class="wh-line"><b>' + esc(fmtDate(s.date)) + '</b> · ' + esc(onOffText(s)) +
+      (open ? ' <span class="badge wait">근무중</span>' : '') + '</div>' +
+    '<div class="wh-line2">' +
+      (s.place ? esc(s.place) + ' · ' : '') +
+      (open ? '진행중' : hoursLabel(s) + ' · ' + won(s.wage)) +
+      (open ? '' : (paid ? ' · <b style="color:#15803d">정산완료</b>' : (s.clientPaid ? ' · 거래처 입금' : ' · 미입금'))) +
+    '</div>' +
+    '<div class="wh-btns">' +
+      (open ? '' : '<button class="mini" data-act="worker-shift-sms" data-id="' + s.id + '">계좌 문자</button>') +
+      '<button class="mini" data-act="worker-shift-edit" data-id="' + s.id + '">수정</button>' +
+      '<button class="mini danger" data-act="worker-shift-del" data-id="' + s.id + '">삭제</button>' +
+    '</div>' +
+  '</div>';
+}
+function openWorkerShifts(workerId){
+  const w = workerById(workerId);
+  if (!w) return;
+  const today = dispatchDateKey();
+  const list = DB.shifts.filter(s => s.workerId === w.id)
+    .slice()
+    .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')) || timeMin(b.start) - timeMin(a.start));
+  const todayList = list.filter(s => s.date === today);
+  const oldList = list.filter(s => s.date !== today);
+  const tHours = todayList.reduce((a, s) => a + num(hoursOf(s)), 0);
+  const tWage = todayList.reduce((a, s) => a + num(s.wage), 0);
+  const openN = todayList.filter(isOpenShift).length;
+
+  const body =
+    '<div class="wh">' +
+      '<div class="wh-sum">' +
+        '<div class="wh-cell"><b>' + todayList.length + '</b><span>오늘 회차</span></div>' +
+        '<div class="wh-cell"><b>' + (openN ? 'ON 1' : (todayList.length ? '마감' : '-')) + '</b><span>지금 상태</span></div>' +
+        '<div class="wh-cell"><b>' + tHours + '시간</b><span>오늘 근무</span></div>' +
+        '<div class="wh-cell"><b>' + won(tWage) + '</b><span>오늘 일당</span></div>' +
+      '</div>' +
+      (todayList.length
+        ? '<div class="wh-h">오늘</div>' + todayList.map(shiftHistoryRow).join('')
+        : '<p class="form-note">오늘 근무 기록이 없습니다.</p>') +
+      (oldList.length
+        ? '<div class="wh-h">지난 기록 <i>' + oldList.length + '건</i></div>' + oldList.slice(0, 60).map(shiftHistoryRow).join('')
+        : '') +
+      '<p class="form-note">여기서 바로 수정·삭제하거나 계좌 문자를 보낼 수 있습니다.</p>' +
+      '<button class="btn ghost wide" type="button" data-act="worker-shifts-tab" data-id="' + esc(w.id) + '">근무·입금 탭에서 이 인력만 보기</button>' +
+    '</div>';
+
+  openModal({
+    title: '근무 내역',
+    sub: esc(w.name) + (ageGroupKey(w) ? ' · ' + ageGroupKey(w) : '') + ' · ' + list.length + '건',
+    body,
+    noFooter: true
   });
 }
 
@@ -3720,6 +3826,19 @@ function confirmModal(title, sub, label, onYes){
   });
 }
 
+/* 근무 기록 삭제 — 오늘 출역 · 근무·입금 탭 · 근무 내역 창에서 함께 쓴다 */
+function askDeleteShift(sid){
+  const s = DB.shifts.find(x => x.id === sid);
+  if (!s) return;
+  confirmModal('근무 기록 삭제',
+    wName(s) + ' · ' + fmtDate(s.date) + ' · ' + onOffText(s) + (num(s.wage) ? ' · ' + won(s.wage) : '') + '\n삭제하면 되돌릴 수 없습니다.',
+    '삭제', () => {
+      DB.shifts = DB.shifts.filter(x => x.id !== sid);
+      dbDelete('logs', sid);
+      saveDB(); render(); toast('삭제했습니다');
+    });
+}
+
 /* ---------- 거래처 자동완성 ---------- */
 function normClientName(s){ return String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); }
 function clientByName(name){
@@ -3753,6 +3872,7 @@ function mountClientPicker(wrap, s, opts){
   const customInput = $('[name=customPlace]', wrap);
   if (!input || !list || !hidden || !pickEl || !customWrap) return null;
   const curWorkerId = () => {
+    if (opts.workerId) return opts.workerId;      /* 인력 선택 칸이 없는 창(출역 ON)은 미리 받는다 */
     const el = $('#fqWorker', wrap) || $('#fWorker', wrap);
     return el ? el.value : '';
   };
@@ -4153,36 +4273,119 @@ function toggleTodayShift(workerId){
 }
 
 /* OFF → ON: 바로 켜지 않고 확인창을 먼저 띄운다.
-   · 확인 : 확인을 누른 순간의 현재 시각으로 새 건을 만든다
+   · 시작 시간 : 지금 시각이 미리 채워져 있고, 필요하면 고쳐서 켤 수 있다
+   · 거래처 : 자주 가는 거래처 칩이나 검색으로 고를 수 있고, 비워 두어도 된다
+   · 확인 : 고른 시작 시각·거래처로 새 건을 만든다
    · 취소 : 아무것도 바꾸지 않는다 */
 function askStartShift(w){
   const timeId = 'onAskTime';
+  const inputId = 'onAskInput';
   const shown = hmOf(new Date());
   const m = openModal({
     title: '출역 ON',
-    sub: '오늘 출역 체크',
+    sub: '시작 시간 · 거래처 (둘 다 그대로 두어도 됩니다)',
     body:
       '<div class="on-ask">' +
-        '<p class="on-ask-msg"><b>' + esc(w.name) + '</b> 지금 시각(<b id="' + timeId + '">' + shown + '</b>)으로 출역 ON 할까요?</p>' +
-        '<p class="form-note">확인을 누른 순간의 시각이 시작으로 기록되고, OFF를 누를 때까지 근무중으로 남습니다. 취소하면 아무것도 바뀌지 않습니다.</p>' +
+        '<p class="on-ask-msg"><b>' + esc(w.name) + '</b> 님 출역 ON — 시작 시간을 확인하고, 거래처가 있으면 골라 주세요. (지금 <b id="' + timeId + '">' + shown + '</b>)</p>' +
+        '<label class="f on-ask-f"><span>시작 시간</span>' +
+          '<input type="time" id="' + inputId + '" step="60" value="' + shown + '"></label>' +
+        '<div id="onAskFreq"></div>' +
+        '<label class="f"><span>거래처 <em>선택 · 비워 두어도 됩니다</em></span>' +
+          '<div class="ac" id="fAcBox">' +
+            '<input type="text" id="fClientInput" autocomplete="off" placeholder="거래처명 · 담당자 · 주소로 검색">' +
+            '<div class="ac-list" id="fAcList" hidden></div>' +
+          '</div>' +
+        '</label>' +
+        '<div class="ac-pick" id="fClientPicked" hidden></div>' +
+        '<input type="hidden" id="fClient" value="">' +
+        '<label class="f" id="fCustomWrap" style="display:none"><span>장소 직접 입력</span>' +
+          '<input type="text" name="customPlace" value="" placeholder="예: 표선 공사현장"></label>' +
+        '<p class="form-note">그대로 확인하면 지금 시각으로 켜집니다. 시작 시간을 고쳐서 켜도 되고, 목록에 없는 거래처는 이름을 적으면 새 거래처로 함께 등록됩니다. OFF를 누를 때까지 근무중으로 남고, 취소하면 아무것도 바뀌지 않습니다.</p>' +
       '</div>',
     submitLabel: '확인',
     onSubmit: (wrap, close) => {
+      const inp = wrap ? wrap.querySelector('#' + inputId) : null;
+      /* 손대지 않았으면 확인을 누른 순간의 시각 — 창을 오래 열어 두어도 정확하다 */
+      const when = (inp && inp.dataset.touched) ? onAskWhen(inp.value) : null;
+      const client = onAskClient(wrap);
       close();
-      return startShiftNow(w, new Date());
+      return startShiftNow(w, when || new Date(), client);
     }
   });
-  /* 창을 열어 둔 사이에도 표시된 시각이 실제 시각을 따라가게 한다 */
+  /* 거래처 : 자주 가는 거래처 칩 · 검색 선택 · 직접 입력 */
+  const freqEl = (m && m.wrap) ? m.wrap.querySelector('#onAskFreq') : null;
+  let picker = null;
+  function paintFreq(){
+    if (!freqEl) return;
+    freqEl.innerHTML = freqChipsHTML(w.id, picker ? picker.current() : '');
+    $$('[data-freq]', freqEl).forEach(b => b.addEventListener('click', () => {
+      if (picker) picker.select(b.dataset.freq);
+    }));
+  }
+  try { picker = mountClientPicker(m.wrap, null, { workerId: w.id, onChange: () => paintFreq() }); } catch(e){ picker = null; }
+  paintFreq();
+
+  /* 창을 열어 둔 사이에도, 손대지 않은 입력값은 실제 시각을 따라가게 한다 */
+  const inp0 = m && m.wrap ? m.wrap.querySelector('#' + inputId) : null;
+  if (inp0){
+    /* 직접 고른 시각은 그대로 둔다 (자동으로 따라가지 않게) */
+    ['input', 'change'].forEach(ev => inp0.addEventListener(ev, () => { inp0.dataset.touched = '1'; }));
+  }
   const tick = setInterval(() => {
     if (!m || !m.wrap || !m.wrap.isConnected){ clearInterval(tick); return; }
-    const el = document.getElementById(timeId);
-    if (el) el.textContent = hmOf(new Date());
+    const live = document.getElementById(timeId);
+    if (live) live.textContent = hmOf(new Date());
+    const inp = m.wrap.querySelector('#' + inputId);
+    if (inp && !inp.dataset.touched) inp.value = hmOf(new Date());
   }, 1000);
   return m;
 }
 
-/* OFF → ON: 지금 시각으로 새 건 (when 을 주면 그 시각) */
-function startShiftNow(w, when){
+/* 확인창에서 고른 거래처 → 기록에 넣을 clientId · place.
+   고르지 않고 비워 두면 둘 다 빈 값 (거래처 없는 출역). */
+function onAskClient(wrap){
+  const none = { clientId: '', place: '', created: false };
+  if (!wrap) return none;
+  const hid = wrap.querySelector('#fClient');
+  const typed = wrap.querySelector('#fClientInput');
+  const custom = wrap.querySelector('[name=customPlace]');
+  const typedName = normClientName(typed ? typed.value : '');
+  const directName = normClientName(custom ? custom.value : '') || typedName;
+  let cid = hid ? String(hid.value || '') : '';
+  if (cid === '__custom' || (!cid && directName)){
+    if (!directName) return none;
+    const got = ensureClient(directName);
+    if (!got) return none;
+    return { clientId: got.client.id, place: got.client.name, created: !!got.created };
+  }
+  if (cid){
+    const c = clientById(cid) || (typedName ? clientByName(typedName) : null);
+    if (c) return { clientId: c.id, place: c.name, created: false };
+  }
+  /* 목록에서 고르지 않았는데 이름만 적어 둔 경우도 새 거래처로 등록 */
+  if (directName){
+    const got = ensureClient(directName);
+    if (got) return { clientId: got.client.id, place: got.client.name, created: !!got.created };
+  }
+  return none;
+}
+
+/* 확인창에서 고른 시작 시각(HH:MM) → 실제 시각.
+   시계는 '지금과 가장 가까운 그 시각'으로 잡아 자정을 넘긴 선택도 자연스럽게 맞춘다. */
+function onAskWhen(val){
+  const p = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(String(val || '').trim());
+  if (!p) return null;
+  const now = new Date();
+  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate(), Number(p[1]), Number(p[2]), 0, 0);
+  if (isNaN(d.getTime())) return null;
+  const half = 12 * 60 * 60 * 1000;
+  if (d.getTime() - now.getTime() > half) d.setDate(d.getDate() - 1);
+  else if (now.getTime() - d.getTime() > half) d.setDate(d.getDate() + 1);
+  return d;
+}
+
+/* OFF → ON: 고른 시작 시각으로 새 건 (when 을 주면 그 시각, client 를 주면 거래처도 함께) */
+function startShiftNow(w, when, client){
   const now = (when instanceof Date && !isNaN(when)) ? when : new Date();
   const rec = {
     id: uid(),
@@ -4190,8 +4393,8 @@ function startShiftNow(w, when){
     createdAt: now.toISOString(),
     workerId: w.id,
     workerName: w.name,
-    clientId: '',
-    place: '',
+    clientId: (client && client.clientId) || '',
+    place: (client && client.place) || '',
     date: dispatchDateKey(now),
     start: hmOf(now),
     end: '',
@@ -4215,6 +4418,7 @@ function startShiftNow(w, when){
   render();
   const mine = DB.shifts.filter(s => s.workerId === w.id && s.date === rec.date);
   toast(w.name + ' 님 ' + (mine.length > 1 ? mine.length + '차 ' : '') + 'ON ' + rec.start + ' 기록' +
+    (rec.place ? ' · ' + rec.place : '') +
     (wasAttended ? '' : ' · 출근도 함께 체크했습니다'));
   return rec;
 }
@@ -5964,11 +6168,13 @@ document.addEventListener('click', ev => {
   const id = el.dataset.id;
 
   switch (act){
-    case 'tab':
-      if (el.dataset.tab !== ui.tab) navPush({ tab: el.dataset.tab });
+    case 'tab': {
+      const sameTab = el.dataset.tab === ui.tab;
+      if (!sameTab) navPush({ tab: el.dataset.tab });
       ui.tab = el.dataset.tab;
-      render();
+      render(sameTab);   /* 같은 탭을 다시 누르면 맨 위로, 탭을 옮기면 새 화면 첫머리 */
       break;
+    }
 
     case 'admin-sheet':
       openAdminSheet();
@@ -6070,16 +6276,38 @@ document.addEventListener('click', ev => {
       break;
     }
 
-    case 'del-shift': {
-      const s = DB.shifts.find(x => x.id === id);
-      if (!s) break;
-      confirmModal('근무 기록 삭제',
-        wName(s) + ' · ' + fmtDate(s.date) + ' · ' + onOffText(s) + (num(s.wage) ? ' · ' + won(s.wage) : '') + '\n삭제하면 되돌릴 수 없습니다.',
-        '삭제', () => {
-          DB.shifts = DB.shifts.filter(x => x.id !== id);
-          dbDelete('logs', id);
-          saveDB(); render(); toast('삭제했습니다');
-        });
+    case 'del-shift':
+      askDeleteShift(id);
+      break;
+
+    /* 근무 내역 창의 줄별 동작 — 창을 닫고 해당 동작으로 */
+    case 'worker-shift-sms': {
+      const sid = id;
+      closeTopModal();
+      setTimeout(() => openBillingSms(sid), 80);
+      break;
+    }
+    case 'worker-shift-edit': {
+      const sid = id;
+      closeTopModal();
+      setTimeout(() => openShiftModal(sid), 80);
+      break;
+    }
+    case 'worker-shift-del': {
+      const sid = id;
+      closeTopModal();
+      setTimeout(() => askDeleteShift(sid), 80);
+      break;
+    }
+    case 'worker-shifts-tab': {
+      const wid = id || 'all';
+      closeTopModal();
+      setTimeout(() => {
+        ui.shiftWorker = wid;
+        ui.shiftStatus = 'all';
+        ui.tab = 'shifts';
+        render();
+      }, 140);
       break;
     }
 
@@ -6112,6 +6340,10 @@ document.addEventListener('click', ev => {
       break;
 
     case 'add-worker':      openWorkerModal(null);
+      break;
+
+    case 'worker-shifts':
+      openWorkerShifts(id || el.dataset.worker);
       break;
 
     case 'worker-stats':
