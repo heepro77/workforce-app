@@ -1433,6 +1433,7 @@ const ADMIN_DEFAULTS = [
 const SYNC = {
   client: null,
   channel: null,
+  adminChannel: null,     /* wf_admins 는 로그인 전에도 구독한다 (별도 채널) */
   state: 'init',      /* init · connecting · live · pending · offline */
   error: '',
   rt: 'off',          /* off · on · err */
@@ -1440,7 +1441,9 @@ const SYNC = {
   busy: false,
   lastLoadAt: 0,
   adminsMissing: false,   /* wf_admins 표가 아직 없으면 로그인·비밀번호는 이 기기에서만 */
-  adminsError: ''
+  adminsError: '',
+  adminsLoaded: false,    /* wf_admins 를 한 번이라도 읽었는지 */
+  adminIds: null          /* DB에 실제로 있는 관리자 id (null = 아직 확인 전) */
 };
 let renderDirty = false;
 
@@ -1808,21 +1811,28 @@ function removeLocal(kind, id){
   if (i >= 0) arr.splice(i, 1);
 }
 
+/* DB 클라이언트는 로그인 전(관리자 계정만 읽을 때)에도 만들 수 있다 */
+function ensureDbClient(){
+  if (SYNC.client) return true;
+  if (typeof supabase === 'undefined' || !supabase || typeof supabase.createClient !== 'function') return false;
+  try {
+    SYNC.client = supabase.createClient(SB_URL, SB_PUBLISHABLE_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false },
+      realtime: { params: { eventsPerSecond: 10 } }
+    });
+    return true;
+  } catch(e){
+    initDbFailed('DB 클라이언트를 만들지 못했습니다: ' + String((e && e.message) || e));
+    return false;
+  }
+}
 function initDb(){
   if (!SYNC.client){
     if (typeof supabase === 'undefined' || !supabase || typeof supabase.createClient !== 'function'){
       initDbFailed('Supabase 라이브러리를 불러오지 못했습니다');
       return;
     }
-    try {
-      SYNC.client = supabase.createClient(SB_URL, SB_PUBLISHABLE_KEY, {
-        auth: { persistSession: false, autoRefreshToken: false },
-        realtime: { params: { eventsPerSecond: 10 } }
-      });
-    } catch(e){
-      initDbFailed('DB 클라이언트를 만들지 못했습니다: ' + String((e && e.message) || e));
-      return;
-    }
+    if (!ensureDbClient()) return;      /* ensureDbClient 가 SYNC.error 에 남긴다 */
   }
   loadFromDb();
 }
@@ -1832,11 +1842,13 @@ function initDbFailed(msg){
   setDbState('offline', msg);
 }
 
-async function loadFromDb(){
+async function loadFromDb(keepScroll){
   if (!SYNC.client || SYNC.busy) return false;
+  const keepY = keepScroll ? window.scrollY : 0;
   SYNC.busy = true;
   setDbState('connecting', '');
   await loadAdminsFromDb();
+  subscribeAdmins();          /* 표가 살아 있으면 관리자 계정 변경도 실시간으로 받는다 */
   const res = {};
   await Promise.all(TABLE_LIST.map(async k => { res[k] = await fetchTable(k); }));
 
@@ -1902,6 +1914,7 @@ async function loadFromDb(){
   saveDB();
   SYNC.busy = false;
   render();
+  if (keepScroll) { try { window.scrollTo({ top: keepY, behavior: 'auto' }); } catch(e){} }
   return true;
 }
 
@@ -1909,13 +1922,34 @@ function reconnectDb(){
   if (SYNC.channel && SYNC.client){
     try { SYNC.client.removeChannel(SYNC.channel); } catch(e){}
   }
+  if (SYNC.adminChannel && SYNC.client){
+    try { SYNC.client.removeChannel(SYNC.adminChannel); } catch(e){}
+  }
   SYNC.channel = null;
+  SYNC.adminChannel = null;
   SYNC.rt = 'off';
   SYNC.busy = false;
   initDb();
 }
 
 /* ---------- 실시간 ---------- */
+/* 관리자 계정(wf_admins)은 로그인 화면에서도 이름이 바뀌어야 하므로 따로 구독한다 */
+function subscribeAdmins(){
+  if (!SYNC.client || SYNC.adminChannel || adminTableMissing()) return;
+  let ch;
+  try {
+    ch = SYNC.client.channel('wf-admins');
+    ch.on('postgres_changes', { event: '*', schema: 'public', table: ADMINS_TABLE }, payload => onAdminChange(payload));
+    ch.subscribe(status => {
+      if (status === 'SUBSCRIBED') return;
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED'){
+        try { SYNC.client.removeChannel(ch); } catch(e){}
+        if (SYNC.adminChannel === ch) SYNC.adminChannel = null;   /* 다음 동기화 때 다시 연결 */
+      }
+    });
+    SYNC.adminChannel = ch;
+  } catch(e){ SYNC.adminChannel = null; }
+}
 function subscribeRealtime(){
   if (!SYNC.client || SYNC.channel) return;
   let ch;
@@ -1925,9 +1959,6 @@ function subscribeRealtime(){
       if (SYNC.counts && SYNC.counts[k] && !SYNC.counts[k].ok) return;   /* 없는 표는 구독하지 않는다 */
       ch.on('postgres_changes', { event: '*', schema: 'public', table: TABLES[k] }, payload => onRealtime(k, payload));
     });
-    if (!adminTableMissing()){
-      ch.on('postgres_changes', { event: '*', schema: 'public', table: ADMINS_TABLE }, payload => onAdminChange(payload));
-    }
     ch.subscribe(status => {
       if (status === 'SUBSCRIBED'){ SYNC.rt = 'on'; }
       else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED'){ SYNC.rt = 'err'; }
@@ -2222,14 +2253,17 @@ function saveAdminAccounts(){
   const names = {}, roles = {}, passes = {};
   let bad = '';
   DB.admins.forEach(a => {
+    const base = adminEditBase(a);          /* 창을 열 때의 값 */
     const nameEl = wrap.querySelector('[data-admname="' + a.id + '"]');
     const roleEl = wrap.querySelector('[data-admrole="' + a.id + '"]');
     const p1 = wrap.querySelector('[data-admpass="' + a.id + '"]');
     const p2 = wrap.querySelector('[data-admpass2="' + a.id + '"]');
-    const nm = nameEl ? String(nameEl.value || '').trim() : a.name;
+    const nm = nameEl ? String(nameEl.value || '').trim() : base.name;
+    const rl = roleEl ? String(roleEl.value || '').trim() : (base.role || '');
     if (!nm) bad = bad || '관리자 이름을 입력해 주세요';
-    names[a.id] = nm;
-    roles[a.id] = roleEl ? String(roleEl.value || '').trim() : (a.role || '');
+    /* 창을 열 때와 달라진 칸만 저장한다 — 그 사이 다른 기기에서 바뀐 이름을 되돌리지 않게 */
+    if (nm !== base.name) names[a.id] = nm;
+    if (rl !== (base.role || '')) roles[a.id] = rl;
     const v1 = p1 ? String(p1.value || '') : '';
     const v2 = p2 ? String(p2.value || '') : '';
     if (v1 || v2){
@@ -2242,27 +2276,27 @@ function saveAdminAccounts(){
 
   const changed = [];
   DB.admins.forEach(a => {
-    if (names[a.id] !== undefined && names[a.id] !== a.name){ a.name = names[a.id]; changed.push(a.id); }
-    if (roles[a.id] !== (a.role || '')){ a.role = roles[a.id]; if (changed.indexOf(a.id) < 0) changed.push(a.id); }
+    if (names[a.id] !== undefined){ a.name = names[a.id]; changed.push(a.id); }
+    if (roles[a.id] !== undefined){ a.role = roles[a.id]; if (changed.indexOf(a.id) < 0) changed.push(a.id); }
     if (passes[a.id]){ a.passHash = passHashOf(a.id, passes[a.id]); if (changed.indexOf(a.id) < 0) changed.push(a.id); }
+    ADM_EDIT_BASE[a.id] = { name: a.name, role: a.role || '' };
   });
   saveDB();
-  const syncing = DB.admins.filter(a => changed.indexOf(a.id) >= 0);
-  Promise.all(syncing.map(syncAdminRow)).then(oks => {
-    const anyFail = oks.some(ok => !ok);
-    if (!syncing.length) return;
-    toast(anyFail
-      ? '관리자 이름·비밀번호를 이 기기에 저장했습니다 · wf_admins 표가 없어 다른 기기에는 아직 반영되지 않습니다'
-      : '관리자 이름·비밀번호를 저장했습니다 · 관리자 기기와 함께 맞춰집니다');
-    try { renderHeader(); } catch(e){}
-    if (document.querySelector('.modal-wrap')){
-      const line = document.getElementById('admSyncLine');
-      if (line) line.textContent = adminDbStateLine();
-    }
-  });
   renderHeader();
   render();
-  toast('관리자 이름·비밀번호를 저장했습니다');
+  const syncing = DB.admins.filter(a => changed.indexOf(a.id) >= 0);
+  if (!syncing.length){ toast('바뀐 내용이 없습니다'); return; }
+  Promise.all(syncing.map(a => syncAdminRow(a, !!passes[a.id]))).then(oks => {
+    const anyFail = oks.some(ok => !ok);
+    toast(anyFail
+      ? '관리자 이름·비밀번호를 이 기기에 저장했습니다' + (adminTableMissing()
+          ? ' · wf_admins 표가 없어 다른 기기에는 아직 반영되지 않습니다'
+          : ' · DB 연결 전이라 다른 기기에는 아직 반영되지 않습니다 (연결되면 함께 맞춰집니다)')
+      : '관리자 이름·비밀번호를 저장했습니다 · 다른 관리자 기기와 함께 맞춰집니다');
+    try { renderHeader(); } catch(e){}
+    const line = document.getElementById('admSyncLine');
+    if (line) line.textContent = adminDbStateLine();
+  });
 }
 
 /* 메신저·DB 관련 버튼 */
@@ -2292,6 +2326,32 @@ document.addEventListener('keydown', ev => {
 
 document.addEventListener('input', ev => {
   if (ev.target && ev.target.id === 'chatInput') ui.chatBody = ev.target.value;
+});
+
+/* ============================================================
+   앱으로 돌아왔을 때 다시 맞추기
+   - 휴대폰에서 앱을 내려 두면 실시간 연결이 끊겨 그 사이의
+     관리자 이름 변경을 놓친다. 화면으로 돌아오면 관리자 계정을
+     다시 읽고, 오래 비어 있었으면 기록도 원격 DB 기준으로 맞춘다.
+   ============================================================ */
+let lastReturnSyncAt = 0;
+function returnSync(){
+  const now = Date.now();
+  if (now - lastReturnSyncAt < 2000) return;   /* 화면 전환마다 반복하지 않는다 */
+  lastReturnSyncAt = now;
+  if (!SYNC.client && !ensureDbClient()) return;
+  if (typeof syncAdminsFromDb === 'function') syncAdminsFromDb();
+  if (!isLoggedIn()) return;
+  if (SYNC.state === 'offline' && navigator.onLine !== false){ reconnectDb(); return; }
+  if (SYNC.state === 'live' && !SYNC.busy && now - SYNC.lastLoadAt > 20000) loadFromDb(true);
+}
+
+document.addEventListener('visibilitychange', () => { if (!document.hidden) returnSync(); });
+window.addEventListener('focus', returnSync);
+window.addEventListener('pageshow', ev => { if (ev && ev.persisted) returnSync(); });
+window.addEventListener('online', () => {
+  if (SYNC.state === 'offline'){ reconnectDb(); return; }
+  returnSync();
 });
 
 
@@ -2427,21 +2487,29 @@ function adminInitial(a){
   if (m) return m[1].slice(-1);
   return name.slice(0, 1) || '?';
 }
-function viewLogin(){
+function loginAdminButtonsHTML(){
   const pick = loginPickId();
-  const admins = DB.admins.map(a =>
+  return DB.admins.map(a =>
     '<button type="button" class="login-adm' + (a.id === pick ? ' on' : '') + '" data-act="login-pick" data-id="' + esc(a.id) + '"' +
       ' role="radio" aria-checked="' + (a.id === pick ? 'true' : 'false') + '">' +
       '<span class="av">' + esc(adminInitial(a)) + '</span>' +
       '<span class="nm">' + esc(a.name || '관리자') + '</span>' +
       '<span class="rl">' + esc(a.role || '') + '</span>' +
     '</button>').join('');
-
+}
+/* 로그인 화면의 관리자 목록만 다시 그린다 (비밀번호 입력칸·커서는 그대로 둔다) */
+function paintLoginAdmins(){
+  const wrap = document.querySelector('.login-admins');
+  if (!wrap) return;
+  if (ui.loginAdmin && !adminById(ui.loginAdmin)) ui.loginAdmin = '';
+  wrap.innerHTML = loginAdminButtonsHTML();
+}
+function viewLogin(){
   return '<div class="login-wrap">' +
     '<div class="login-mark">🏗</div>' +
     '<h2 class="login-title">인력관리</h2>' +
     '<p class="login-sub">관리자를 선택하고 비밀번호를 입력하세요</p>' +
-    '<div class="login-admins" role="radiogroup" aria-label="관리자 선택">' + admins + '</div>' +
+    '<div class="login-admins" role="radiogroup" aria-label="관리자 선택">' + loginAdminButtonsHTML() + '</div>' +
     '<label class="login-pass"><span>비밀번호</span>' +
       '<input id="loginPass" type="password" autocomplete="current-password" placeholder="비밀번호">' +
     '</label>' +
@@ -2538,15 +2606,28 @@ function openAdminSheet(){
 }
 
 /* ---------- wf_admins: 관리자 이름·비밀번호를 기기 사이에 맞춘다 ---------- */
-function adminRow(a){
-  return {
+/* 설정 창을 연 순간의 이름·역할. 이 값과 달라진 칸만 저장해, 그 사이 다른 기기에서
+   바뀐 이름을 이 기기가 되돌리지 않게 한다. */
+const ADM_EDIT_BASE = {};
+function adminEditBase(a){ return ADM_EDIT_BASE[a.id] || { name: a.name, role: a.role || '' }; }
+
+function adminRow(a, newPass){
+  const row = {
     id: a.id,
     name: a.name || '',
     role: a.role || '',
-    pass_hash: adminPassHash(a),
     updated_by: AUTH.adminId || a.id,
     updated_at: new Date().toISOString()
   };
+  /* 비밀번호 해시는 이 기기에서 확인한 값만 다시 보낸다.
+     DB에 있는데 이 기기가 아직 못 읽은 해시를 기본값(1234)으로 덮어쓰지 않는다. */
+  const local = a.passHash ? String(a.passHash) : '';
+  const known = (a.syncedHash === undefined) ? null : String(a.syncedHash || '');
+  if (newPass) row.pass_hash = adminPassHash(a);                 /* 지금 정한 새 비밀번호 */
+  else if (!(SYNC.adminIds instanceof Set)) { /* 표를 못 읽었으니 해시는 건드리지 않는다 */ }
+  else if (!SYNC.adminIds.has(a.id)) row.pass_hash = adminPassHash(a);   /* 이 기기가 처음 만드는 계정 */
+  else if (local && (known === local || known === '')) row.pass_hash = local;
+  return row;
 }
 function adminTableMissing(){ return !!(SYNC && SYNC.adminsMissing); }
 function adminDbStateLine(){
@@ -2554,9 +2635,9 @@ function adminDbStateLine(){
   if (adminTableMissing()) return 'wf_admins 표가 없어 이 기기에만 저장됩니다';
   return '관리자 3명 기기와 함께 맞춰집니다';
 }
-function syncAdminRow(a){
+function syncAdminRow(a, newPass){
   if (!SYNC.client || SYNC.state !== 'live') return Promise.resolve(false);
-  return SYNC.client.from(ADMINS_TABLE).upsert(adminRow(a), { onConflict: 'id' }).then(r => {
+  return SYNC.client.from(ADMINS_TABLE).upsert(adminRow(a, newPass), { onConflict: 'id' }).then(r => {
     if (r && r.error){
       if (isMissingTable(r.error)){
         SYNC.adminsMissing = true;
@@ -2578,7 +2659,7 @@ function adoptAdminRow(row){
   if (!row || !row.id) return false;
   let a = adminById(row.id);
   if (!a){
-    a = { id: row.id, name: row.name || '관리자', role: row.role || '', passHash: row.pass_hash || '' };
+    a = { id: row.id, name: row.name || '관리자', role: row.role || '', passHash: row.pass_hash || '', syncedHash: row.pass_hash || '' };
     DB.admins.push(a);
     return true;
   }
@@ -2586,6 +2667,8 @@ function adoptAdminRow(row){
   if (row.name && row.name !== a.name){ a.name = row.name; changed = true; }
   if (row.role !== undefined && row.role !== null && row.role !== a.role){ a.role = row.role; changed = true; }
   if (row.pass_hash && row.pass_hash !== a.passHash){ a.passHash = row.pass_hash; changed = true; }
+  /* DB에 있는 값 — 이 기기에서 다시 보낼 때 이 값과 같을 때만 해시를 싣는다 */
+  if (row.pass_hash !== undefined) a.syncedHash = row.pass_hash || '';
   return changed;
 }
 function loadAdminsFromDb(){
@@ -2600,6 +2683,8 @@ function loadAdminsFromDb(){
     SYNC.adminsMissing = false;
     SYNC.adminsError = '';
     const rows = Array.isArray(r.data) ? r.data : [];
+    SYNC.adminsLoaded = true;
+    SYNC.adminIds = new Set(rows.filter(x => x && x.id).map(x => x.id));   /* 이 표에 실제로 있는 계정 */
     if (!rows.length) return true;      /* 아직 올린 계정이 없으면 이 기기 기본값(1234)을 쓴다 */
     let changed = false;
     rows.forEach(row => { if (adoptAdminRow(row)) changed = true; });
@@ -2630,7 +2715,25 @@ function onAdminChange(payload){
     try { saveDB(); } catch(e){}
     try { renderHeader(); } catch(e){}
     if (isLoggedIn()) scheduleRender();
+    else if (typeof paintLoginAdmins === 'function') paintLoginAdmins();   /* 로그인 화면의 이름도 바로 */
   }
+}
+
+/* 관리자 계정만 DB에서 다시 읽는다 — 로그인 화면에서도, 앱으로 돌아왔을 때도 */
+function loginAdmNote(msg){
+  const el = document.getElementById('loginMsg');
+  if (!el) return;
+  if (msg) el.textContent = msg;
+  else if (el.textContent === '관리자 계정을 불러오는 중…') el.textContent = '';
+}
+function syncAdminsFromDb(){
+  if (!ensureDbClient()) return Promise.resolve(false);
+  if (!isLoggedIn()) loginAdmNote('관리자 계정을 불러오는 중…');
+  return loadAdminsFromDb().then(ok => {
+    if (ok) subscribeAdmins();
+    if (!isLoggedIn()){ loginAdmNote(''); try { paintLoginAdmins(); } catch(e){} }
+    return ok;
+  });
 }
 
 /* ---------- 기록 작성자 배지 ---------- */
@@ -5570,8 +5673,9 @@ function openSettings(){
       esc(SYNC.state === 'live' ? (adminTableMissing() ? '없음 · 이 기기에만' : '연결됨') : '확인 전') + '</span></div>';
 
   const me = curAdmin().id;
-  const admEdit = DB.admins.map(a =>
-    '<div class="adm-acct' + (a.id === me ? ' on' : '') + '">' +
+  const admEdit = DB.admins.map(a => {
+    ADM_EDIT_BASE[a.id] = { name: a.name, role: a.role || '' };   /* 지금 보이는 값 = 저장 기준 */
+    return '<div class="adm-acct' + (a.id === me ? ' on' : '') + '">' +
       '<div class="adm-acct-h">' +
         '<b>' + esc(a.name) + '</b>' +
         (a.id === me ? '<span class="badge reg">현재 로그인</span>' : '') +
@@ -5585,7 +5689,8 @@ function openSettings(){
         '<input type="password" data-admpass="' + esc(a.id) + '" value="" autocomplete="new-password" placeholder="새 비밀번호 (4자리 이상)" aria-label="새 비밀번호">' +
         '<input type="password" data-admpass2="' + esc(a.id) + '" value="" autocomplete="new-password" placeholder="새 비밀번호 확인" aria-label="새 비밀번호 확인">' +
       '</div>' +
-    '</div>').join('');
+    '</div>';
+  }).join('');
 
   const body =
     '<p class="form-note" style="font-size:12.5px;color:#3b4450;font-weight:700">' + esc(dbStateLine()) + '</p>' +
@@ -6073,6 +6178,8 @@ if (isLoggedIn()) DB.currentAdminId = AUTH.adminId;
 else ui.loginAdmin = DB.currentAdminId;
 render();
 if (isLoggedIn()) initDb();
+/* 로그인 화면에서도 관리자 이름·비밀번호는 다른 기기와 맞춘다 (인력·기록 같은 자료는 로그인 후에만) */
+else syncAdminsFromDb();
 
 /* 홈 화면에 추가(설치형 앱) — 캐시 없는 최소 서비스 워커 */
 if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator && location.protocol === 'https:'){
