@@ -606,6 +606,29 @@
   .wh-cell{background:#f7f8fa;border:1px solid var(--line);border-radius:10px;padding:7px 4px;text-align:center}
   .wh-cell b{display:block;font-size:13px;font-weight:900;letter-spacing:-.3px}
   .wh-cell span{display:block;font-size:10.5px;font-weight:700;color:var(--muted);margin-top:1px}
+  .wh-cell.wide{grid-column:1 / -1}
+  /* 남아 있는 돈은 색으로 구분 — 받을 돈은 파랑, 줄 돈은 주황, 0원은 차분한 완료 톤 */
+  .wh-cell.due-in{background:#eef3ff;border-color:#c9d8ff;border-left:3px solid var(--brand)}
+  .wh-cell.due-in b{color:var(--brand-deep)}
+  .wh-cell.due-in span{color:#4c67c9}
+  .wh-cell.due-out{background:#fff4e6;border-color:#f2d2a4;border-left:3px solid #d97706}
+  .wh-cell.due-out b{color:#a9430a}
+  .wh-cell.due-out span{color:#a16307}
+  .wh-cell.done{background:#f5f8f6;border-color:#e3eae5}
+  .wh-cell.done b{color:#5f8f74}
+  /* 잔액 — 받을 돈이 더 남았으면 파랑, 줄 돈이 더 남았으면 빨강, 0원이면 회색 */
+  .wh-cell.bal-in{background:#eef3ff;border-color:#c9d8ff;border-left:3px solid var(--brand)}
+  .wh-cell.bal-in b{color:var(--brand-deep)}
+  .wh-cell.bal-in span{color:#4c67c9}
+  .wh-cell.bal-out{background:#fdeeea;border-color:#f6cfc5;border-left:3px solid #d94a2b}
+  .wh-cell.bal-out b{color:#b3261e}
+  .wh-cell.bal-out span{color:#a8463a}
+  .wh-cell.bal-zero{background:#f7f8fa}
+  .wh-cell.bal-zero b{color:#8b95a1}
+  /* 회차별 입금 상태 — 남았으면 주황 알약, 끝났으면 연한 초록 알약 */
+  .due-pill{display:inline-block;border-radius:999px;padding:1px 7px;font-size:10.5px;font-weight:900;letter-spacing:-.2px;border:1px solid transparent}
+  .due-pill.wait{background:var(--amber-soft);border-color:#f0dc9e;color:#8a5a00}
+  .due-pill.ok{background:var(--green-soft);border-color:#cbe9d8;color:#15803d}
   .wh-h{font-size:11.5px;font-weight:900;color:var(--muted);margin:12px 2px 6px}
   .wh-h i{font-style:normal;font-weight:800;opacity:.8}
   .wh-row{border:1px solid var(--line);border-radius:11px;background:#fff;padding:9px 11px;margin-bottom:7px}
@@ -3808,8 +3831,8 @@ function allShiftRow(s){
       (s.memo ? ' · ' + esc(s.memo) : '') + '</div>' +
     (open
       ? '<div class="wh-line2">ON ' + esc(onHM(s)) + ' · ' + esc(elapsedLabel(openMinutes(s))) + ' 경과</div>'
-      : '<div class="wh-line2">거래처 ' + (s.clientPaid ? '<b style="color:#15803d">입금완료</b>' : '<b style="color:#b45309">미입금</b>') +
-        ' · 인력 ' + (s.workerPaid ? '<b style="color:#15803d">지급완료</b>' : '<b style="color:#b45309">미지급</b>') + '</div>') +
+      : '<div class="wh-line2">거래처 ' + (s.clientPaid ? '<span class="due-pill ok">입금완료</span>' : '<span class="due-pill wait">미입금</span>') +
+        ' · 인력 ' + (s.workerPaid ? '<span class="due-pill ok">지급완료</span>' : '<span class="due-pill wait">미지급</span>') + '</div>') +
     '<div class="wh-btns">' +
       (open ? '' : '<button class="mini" data-act="worker-shift-sms" data-id="' + s.id + '">계좌 문자</button>') +
       '<button class="mini" data-act="' + (open ? 'records-shift-quick' : 'records-shift-edit') + '" data-id="' + s.id + '">' +
@@ -3891,6 +3914,12 @@ function openAllShifts(){
   const tHours = list.reduce((a, s) => a + (isOpenShift(s) ? 0 : num(hoursOf(s))), 0);
   const tWage = sumWage(list);
   const whoN = new Set(list.map(s => s.workerId || ('name:' + (s.workerName || '')))).size;
+  /* 남아 있는 돈 — 받을 돈(오늘 거래처 미수금) · 줄 돈(오늘 인력 미지급) · 잔액(받을 − 줄) */
+  const cAmt = sumWage(cDue);
+  const wAmt = sumWage(wDue);
+  const bal = Math.round(cAmt - wAmt);
+  const balState = bal > 0 ? 'bal-in' : (bal < 0 ? 'bal-out' : 'bal-zero');
+  const balText = (bal > 0 ? '+' : (bal < 0 ? '−' : '')) + won(Math.abs(bal));
 
   const body = '<div class="wh">' +
     todayHoursHTML() +
@@ -3898,8 +3927,9 @@ function openAllShifts(){
     '<div class="wh-sum" style="grid-template-columns:repeat(2,1fr);margin-top:10px">' +
       '<div class="wh-cell"><b>' + list.length + '건</b><span>오늘 기록</span></div>' +
       '<div class="wh-cell"><b>' + won(tWage) + '</b><span>오늘 일당</span></div>' +
-      '<div class="wh-cell"><b>' + won(sumWage(cDue)) + '</b><span>받을 돈 · ' + cDue.length + '건</span></div>' +
-      '<div class="wh-cell"><b>' + won(sumWage(wDue)) + '</b><span>줄 돈 · ' + wDue.length + '건</span></div>' +
+      '<div class="wh-cell ' + (cAmt > 0 ? 'due-in' : 'done') + '"><b>' + won(cAmt) + '</b><span>받을 돈 · ' + cDue.length + '건</span></div>' +
+      '<div class="wh-cell ' + (wAmt > 0 ? 'due-out' : 'done') + '"><b>' + won(wAmt) + '</b><span>줄 돈 · ' + wDue.length + '건</span></div>' +
+      '<div class="wh-cell wide ' + balState + '"><b>' + balText + '</b><span>잔액 · 받을 돈 − 줄 돈</span></div>' +
     '</div>' +
     '<div class="wh-h">오늘 근무 <i>' + esc(fmtDate(today)) + ' · ' + list.length + '건' +
       (tHours ? ' · ' + tHours + '시간' : '') + '</i></div>' +
