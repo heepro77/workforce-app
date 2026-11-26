@@ -613,7 +613,7 @@
   .wh-line2{font-size:11.5px;font-weight:700;color:var(--muted);margin-top:3px}
   .wh-btns{display:flex;gap:5px;flex-wrap:wrap;margin-top:7px}
 
-  /* ---------- 전체 근무 기록: 맨 위 오늘 인력별 근무 시간 ---------- */
+  /* ---------- 오늘 근무 기록: 맨 위 오늘 인력별 근무 시간 ---------- */
   .th-sum{background:linear-gradient(135deg,#f5f8ff 0%,#eef3ff 100%);border:1px solid #dbe4ff;border-radius:12px;padding:9px 11px 10px;margin:0 0 10px}
   .th-sum-h{display:flex;align-items:baseline;gap:6px;font-size:11.5px;font-weight:900;color:#3b4fa8}
   .th-sum-h i{font-style:normal;font-weight:800;font-size:11px;color:#7b88c9}
@@ -3406,7 +3406,7 @@ function viewHome(){
     todayBoard +
     '<div class="hero-list">' + todayPills + '</div>' +
     '<div class="hero-acts">' +
-      '<button class="hero-btn" data-act="all-shifts">📋 전체 근무 기록</button>' +
+      '<button class="hero-btn" data-act="all-shifts">📋 오늘 근무 기록</button>' +
     '</div>' +
   '</section>' +
 
@@ -3784,9 +3784,10 @@ function openWorkerShifts(workerId){
 }
 
 /* ============================================================
-   전체 근무 기록 — 오늘 출역 카드의 '전체 근무 기록' 버튼
-   · 모든 인력의 오늘·지난 회차를 한 창에 모아 보여 준다
+   오늘 근무 기록 — 오늘 출역 카드의 '오늘 근무 기록' 버튼
+   · 모든 인력의 오늘(기준일) 회차만 한 창에 모아 보여 준다
    · 회차마다 시간·거래처·일당·입금 상태 + 계좌 문자/수정/삭제
+   · 지난 회차는 이 창에 넣지 않는다 (근무·입금 탭·인력별 근무 내역에서 본다)
    · 맨 위 '+ 새 근무시간 등록' → 등록을 마치면 이 창으로 돌아온다
    ============================================================ */
 function allShiftRow(s){
@@ -3818,7 +3819,7 @@ function allShiftRow(s){
   '</div>';
 }
 
-/* 등록·수정·삭제를 마친 뒤 전체 근무 기록 창으로 돌아온다 (뒤로가기 기록이 정리된 다음) */
+/* 등록·수정·삭제를 마친 뒤 오늘 근무 기록 창으로 돌아온다 (뒤로가기 기록이 정리된 다음) */
 function returnToShiftRecords(){
   let n = 0;
   const tick = () => {
@@ -3830,7 +3831,7 @@ function returnToShiftRecords(){
 }
 
 /* ---------- 맨 위: 오늘(기준일) 인력별 근무 시간 ----------
-   전체 근무 기록 창을 열면 바로 보이도록 인력별 오늘 근무 시간을 칩으로 모아 준다.
+   오늘 근무 기록 창을 열면 바로 보이도록 인력별 오늘 근무 시간을 칩으로 모아 준다.
    · 오늘 회차를 인력별로 합산 (마감된 회차의 시간 합 · 10분 단위)
    · 아직 ON(근무중)인 회차는 시간 합에 넣지 않고 '근무중 25분'처럼 옆에 따로 보여 준다
      (아래 '오늘 · 4건 · 12시간' 합계와 같은 셈이 되도록) */
@@ -3881,47 +3882,36 @@ function todayHoursHTML(){
 
 function openAllShifts(){
   const today = dispatchDateKey();
-  const list = (DB.shifts || []).slice().sort((a, b) =>
-    String(b.date || '').localeCompare(String(a.date || '')) || timeMin(b.start) - timeMin(a.start));
-  const todayList = list.filter(s => s.date === today);
-  const pastList = list.filter(s => s.date !== today);
+  /* 오늘(기준일) 회차만 — 지난 회차는 창에 넣지 않고 기록도 지우지 않는다 */
+  const list = (DB.shifts || []).filter(s => s.date === today)
+    .slice()
+    .sort((a, b) => timeMin(a.start) - timeMin(b.start));
   const cDue = list.filter(s => !s.clientPaid);
   const wDue = list.filter(s => !s.workerPaid);
-  const tHours = todayList.reduce((a, s) => a + (isOpenShift(s) ? 0 : num(hoursOf(s))), 0);
-
-  /* 지난 회차는 날짜별로 묶는다 */
-  const groups = [];
-  pastList.forEach(s => {
-    const last = groups[groups.length - 1];
-    if (!last || last.date !== s.date) groups.push({ date: s.date, rows: [s] });
-    else last.rows.push(s);
-  });
+  const tHours = list.reduce((a, s) => a + (isOpenShift(s) ? 0 : num(hoursOf(s))), 0);
+  const tWage = sumWage(list);
+  const whoN = new Set(list.map(s => s.workerId || ('name:' + (s.workerName || '')))).size;
 
   const body = '<div class="wh">' +
     todayHoursHTML() +
     '<button class="btn primary wide" type="button" data-act="records-add">＋ 새 근무시간 등록</button>' +
     '<div class="wh-sum" style="grid-template-columns:repeat(2,1fr);margin-top:10px">' +
-      '<div class="wh-cell"><b>' + list.length + '건</b><span>전체 기록</span></div>' +
-      '<div class="wh-cell"><b>' + todayList.length + '건</b><span>오늘 회차</span></div>' +
+      '<div class="wh-cell"><b>' + list.length + '건</b><span>오늘 기록</span></div>' +
+      '<div class="wh-cell"><b>' + won(tWage) + '</b><span>오늘 일당</span></div>' +
       '<div class="wh-cell"><b>' + won(sumWage(cDue)) + '</b><span>받을 돈 · ' + cDue.length + '건</span></div>' +
       '<div class="wh-cell"><b>' + won(sumWage(wDue)) + '</b><span>줄 돈 · ' + wDue.length + '건</span></div>' +
     '</div>' +
-    '<div class="wh-h">오늘 <i>' + esc(fmtDate(today)) + ' · ' + todayList.length + '건' +
+    '<div class="wh-h">오늘 근무 <i>' + esc(fmtDate(today)) + ' · ' + list.length + '건' +
       (tHours ? ' · ' + tHours + '시간' : '') + '</i></div>' +
-    (todayList.length ? todayList.map(allShiftRow).join('')
-      : '<p class="form-note">오늘 등록된 근무 기록이 없습니다. 위의 <b>＋ 새 근무시간 등록</b>으로 바로 넣을 수 있습니다.</p>') +
-    (groups.length
-      ? '<div class="wh-h">지난 기록 <i>' + pastList.length + '건</i></div>' +
-        groups.map(g => '<div class="wh-h" style="margin-top:10px">' + esc(fmtDate(g.date)) + ' <i>' +
-          g.rows.length + '건 · ' + won(sumWage(g.rows)) + '</i></div>' + g.rows.map(allShiftRow).join('')).join('')
-      : (list.length ? '<p class="form-note">지난 근무 기록은 없습니다.</p>' : '')) +
-    '<p class="form-note">행의 <b>계좌 문자 · 수정 · 삭제</b>로 바로 고칠 수 있습니다. 입금 처리와 인력별 필터는 <b>근무·입금</b> 탭에서 합니다.</p>' +
+    (list.length ? list.map(allShiftRow).join('')
+      : '<p class="form-note">오늘 근무 기록이 없습니다. 위의 <b>＋ 새 근무시간 등록</b>으로 바로 넣을 수 있습니다.</p>') +
+    '<p class="form-note">행의 <b>계좌 문자 · 수정 · 삭제</b>로 바로 고칠 수 있습니다. 지난 근무 기록과 입금 처리는 <b>근무·입금</b> 탭에서 봅니다.</p>' +
     '<button class="btn ghost wide" type="button" data-act="worker-shifts-tab" data-id="all">근무·입금 탭에서 보기</button>' +
   '</div>';
 
   openModal({
-    title: '전체 근무 기록',
-    sub: '인력 ' + DB.workers.length + '명 · 총 ' + list.length + '건 · 오늘 ' + todayList.length + '건',
+    title: '오늘 근무 기록',
+    sub: '인력 ' + whoN + '명 · 오늘 ' + list.length + '건' + (tHours ? ' · ' + tHours + '시간' : ''),
     body,
     noFooter: true
   });
@@ -7053,7 +7043,7 @@ document.addEventListener('click', ev => {
       break;
     }
 
-    /* ---------- 전체 근무 기록 창 ---------- */
+    /* ---------- 오늘 근무 기록 창 ---------- */
     case 'all-shifts':
       openAllShifts();
       break;
