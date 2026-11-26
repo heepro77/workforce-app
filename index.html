@@ -613,6 +613,17 @@
   .wh-line2{font-size:11.5px;font-weight:700;color:var(--muted);margin-top:3px}
   .wh-btns{display:flex;gap:5px;flex-wrap:wrap;margin-top:7px}
 
+  /* ---------- 전체 근무 기록: 맨 위 오늘 인력별 근무 시간 ---------- */
+  .th-sum{background:linear-gradient(135deg,#f5f8ff 0%,#eef3ff 100%);border:1px solid #dbe4ff;border-radius:12px;padding:9px 11px 10px;margin:0 0 10px}
+  .th-sum-h{display:flex;align-items:baseline;gap:6px;font-size:11.5px;font-weight:900;color:#3b4fa8}
+  .th-sum-h i{font-style:normal;font-weight:800;font-size:11px;color:#7b88c9}
+  .th-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}
+  .th-chip{display:inline-flex;align-items:baseline;gap:4px;background:#fff;border:1px solid #d7e0fb;border-radius:999px;padding:4px 11px;font-size:12.5px;font-weight:800;color:#28303c;white-space:nowrap}
+  .th-chip b{font-size:13px;font-weight:900;color:var(--brand-deep);letter-spacing:-.3px;font-variant-numeric:tabular-nums}
+  .th-chip em{font-style:normal;font-size:10.5px;font-weight:800;color:#15803d}
+  .th-chip.on{border-color:#bfe6cf;background:#f4fbf7}
+  .th-empty{font-size:12px;font-weight:800;color:#8b95a1;margin-top:6px}
+
   /* ---------- 소개자 · 소개인 정산 ---------- */
   .ref-sum{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:2px 0 10px}
   .ref-cell{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:9px 4px;text-align:center;box-shadow:var(--shadow)}
@@ -3818,6 +3829,56 @@ function returnToShiftRecords(){
   setTimeout(tick, 50);
 }
 
+/* ---------- 맨 위: 오늘(기준일) 인력별 근무 시간 ----------
+   전체 근무 기록 창을 열면 바로 보이도록 인력별 오늘 근무 시간을 칩으로 모아 준다.
+   · 오늘 회차를 인력별로 합산 (마감된 회차의 시간 합 · 10분 단위)
+   · 아직 ON(근무중)인 회차는 시간 합에 넣지 않고 '근무중 25분'처럼 옆에 따로 보여 준다
+     (아래 '오늘 · 4건 · 12시간' 합계와 같은 셈이 되도록) */
+function todayHoursByWorker(day){
+  const key = day || dispatchDateKey();
+  const map = new Map();
+  (DB.shifts || []).forEach(s => {
+    if (s.date !== key) return;
+    const w = workerById(s.workerId);
+    const id = s.workerId || ('name:' + (s.workerName || ''));
+    const o = map.get(id) || { id: id,
+      name: s.workerName || (w && w.name) || '인력',
+      hours: 0, open: false, openMin: 0 };
+    if (isOpenShift(s)){
+      o.open = true;
+      o.openMin += openMinutes(s);
+    } else {
+      o.hours += num(hoursOf(s));
+    }
+    map.set(id, o);
+  });
+  return Array.from(map.values()).sort((a, b) =>
+    (b.hours - a.hours) || (b.open ? 1 : 0) - (a.open ? 1 : 0) || String(a.name).localeCompare(String(b.name), 'ko'));
+}
+/* 7 → '7시간' · 5.5 → '5시간 30분' */
+function todayHoursText(h){
+  const v = Math.round(num(h) * 10) / 10;
+  const hh = Math.floor(v + 1e-9);
+  const mm = Math.round((v - hh) * 60);
+  return hh + '시간' + (mm ? ' ' + mm + '분' : '');
+}
+function todayHoursHTML(){
+  const day = dispatchDateKey();
+  const rows = todayHoursByWorker(day);
+  const head = '<div class="th-sum-h">⏱ 오늘 근무 시간 <i>' + esc(fmtDate(day)) + '</i></div>';
+  if (!rows.length){
+    return '<div class="th-sum">' + head + '<div class="th-empty">오늘 근무 기록 없음</div></div>';
+  }
+  const chips = rows.map(o => {
+    const t = o.hours > 0 ? todayHoursText(o.hours) : (o.open ? '' : '0시간');
+    return '<span class="th-chip' + (o.open ? ' on' : '') + '">' + esc(o.name) +
+      (t ? ' <b>' + esc(t) + '</b>' : '') +
+      (o.open ? '<em>근무중 ' + esc(elapsedLabel(o.openMin)) + '</em>' : '') +
+      '</span>';
+  }).join('');
+  return '<div class="th-sum">' + head + '<div class="th-chips">' + chips + '</div></div>';
+}
+
 function openAllShifts(){
   const today = dispatchDateKey();
   const list = (DB.shifts || []).slice().sort((a, b) =>
@@ -3837,6 +3898,7 @@ function openAllShifts(){
   });
 
   const body = '<div class="wh">' +
+    todayHoursHTML() +
     '<button class="btn primary wide" type="button" data-act="records-add">＋ 새 근무시간 등록</button>' +
     '<div class="wh-sum" style="grid-template-columns:repeat(2,1fr);margin-top:10px">' +
       '<div class="wh-cell"><b>' + list.length + '건</b><span>전체 기록</span></div>' +
